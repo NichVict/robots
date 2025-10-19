@@ -1,0 +1,66 @@
+services:
+  - type: worker
+    name: robot-curto
+    runtime: python
+    region: oregon
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m services.robots.robot_curto
+    envVars:
+      - fromGroup: robots-prod
+
+  - type: worker
+    name: robot-curtissimo
+    runtime: python
+    region: oregon
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m services.robots.robot_curtissimo
+    envVars:
+      - fromGroup: robots-prod
+
+  - type: worker
+    name: robot-clube
+    runtime: python
+    region: oregon
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m services.robots.robot_clube
+    envVars:
+      - fromGroup: robots-prod
+
+  - type: worker
+    name: robot-loss-curto
+    runtime: python
+    region: oregon
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m services.robots.robot_loss_curto
+    envVars:
+      - fromGroup: robots-prod
+
+  - type: worker
+    name: robot-loss-curtissimo
+    runtime: python
+    region: oregon
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m services.robots.robot_loss_curtissimo
+    envVars:
+      - fromGroup: robots-prod
+
+  - type: worker
+    name: robot-loss-clube
+    runtime: python
+    region: oregon
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m services.robots.robot_loss_clube
+    envVars:
+      - fromGroup: robots-prod
