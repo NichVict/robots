@@ -6,6 +6,12 @@ tenacity
 python-dotenv
 requests
 python-telegram-bot==20.3
-supabase
 streamlit-autorefresh
+supabase==2.3.5
+gotrue==2.7.0
+postgrest==0.15.0
+storage3==0.5.3
+realtime==1.0.2
+httpx==0.24.1
+
 

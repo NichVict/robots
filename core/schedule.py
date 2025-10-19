@@ -3,6 +3,18 @@ import datetime
 from zoneinfo import ZoneInfo
 from core.config import TZ, HORARIO_INICIO_PREGAO, HORARIO_FIM_PREGAO
 
+# ==================================================
+# 🔧 Conversão segura dos horários (string → datetime.time)
+# ==================================================
+def _parse_time(hora_str):
+    """Converte 'HH:MM' (string) em objeto datetime.time"""
+    if isinstance(hora_str, datetime.time):
+        return hora_str
+    h, m = map(int, str(hora_str).split(":"))
+    return datetime.time(hour=h, minute=m)
+
+HORARIO_INICIO_PREGAO = _parse_time(HORARIO_INICIO_PREGAO)
+HORARIO_FIM_PREGAO = _parse_time(HORARIO_FIM_PREGAO)
 
 # ==================================================
 # 🕓 UTILITÁRIOS DE TEMPO
@@ -39,14 +51,11 @@ def segundos_ate_abertura(dt: datetime.datetime = None):
     )
 
     if dt < abre:
-        # Antes do pregão
         return int((abre - dt).total_seconds()), abre
     elif dt > fecha:
-        # Depois do pregão → abre no dia seguinte
         prox = abre + datetime.timedelta(days=1)
         return int((prox - dt).total_seconds()), prox
     else:
-        # Já está dentro do pregão
         return 0, abre
 
 

@@ -1,217 +1,229 @@
+# ==================================================
+# 🤖 ROBÔ CLUBE — Monitoramento Automático
+# ==================================================
+# services/robots/robot_clube.py
 # -*- coding: utf-8 -*-
-import streamlit as st
-from yahooquery import Ticker
-import datetime
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import requests
-import asyncio
-from telegram import Bot
-import pandas as pd
-import plotly.graph_objects as go
-from zoneinfo import ZoneInfo
-import re
-import uuid
-import streamlit.components.v1 as components
-import json
-import os
-from streamlit_autorefresh import st_autorefresh
 import time
+import datetime
+from zoneinfo import ZoneInfo
+from core.state import carregar_estado_duravel, salvar_estado_duravel
+from core.prices import obter_preco_atual
+from core.notifications import enviar_alerta
 
-# -----------------------------
-# CONFIGURAÇÕES
-# -----------------------------
-st.set_page_config(page_title="📈 CLUBE - COMPRA E VENDA", layout="wide")
-
+# ==================================================
+# ⚙️ CONFIGURAÇÕES
+# ==================================================
 TZ = ZoneInfo("Europe/Lisbon")
 HORARIO_INICIO_PREGAO = datetime.time(14, 0, 0)
-HORARIO_FIM_PREGAO    = datetime.time(21, 0, 0)
+HORARIO_FIM_PREGAO = datetime.time(21, 0, 0)
+INTERVALO_VERIFICACAO = 300       # 5 minutos
+TEMPO_ACUMULADO_MAXIMO = 1500     # 25 minutos
 
-INTERVALO_VERIFICACAO = 300
-TEMPO_ACUMULADO_MAXIMO = 1500
-LOG_MAX_LINHAS = 1000
-PERSIST_DEBOUNCE_SECONDS = 60
-
-PALETTE = [
-    "#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6",
-    "#06b6d4", "#84cc16", "#f97316", "#ec4899", "#22c55e"
-]
-
-# =============================
-# PERSISTÊNCIA (SUPABASE via REST API + LOCAL JSON)
-# =============================
-SUPABASE_URL = st.secrets["supabase_url_clube"]
-SUPABASE_KEY = st.secrets["supabase_key_clube"]
-TABLE = "kv_state_clube"
-STATE_KEY = "clube_przo_v1"
-LOCAL_STATE_FILE = "session_data/state_clube.json"
-
-
+# ==================================================
+# 🕒 FUNÇÕES DE TEMPO
+# ==================================================
 def agora_lx():
     return datetime.datetime.now(TZ)
 
-def _estado_snapshot():
-    snapshot = {
-        "ativos": st.session_state.get("ativos", []),
-        "historico_alertas": st.session_state.get("historico_alertas", []),
-        "log_monitoramento": st.session_state.get("log_monitoramento", []),
-        "tempo_acumulado": st.session_state.get("tempo_acumulado", {}),
-        "em_contagem": st.session_state.get("em_contagem", {}),
-        "status": st.session_state.get("status", {}),
-        "ultimo_update_tempo": st.session_state.get("ultimo_update_tempo", {}),
-        "pausado": st.session_state.get("pausado", False),
-        "ultimo_estado_pausa": st.session_state.get("ultimo_estado_pausa", None),
-        "ultimo_ping_keepalive": st.session_state.get("ultimo_ping_keepalive", None),
-        "ultima_data_abertura_enviada": st.session_state.get("ultima_data_abertura_enviada", None),
-    }
+def dentro_pregao(dt):
+    t = dt.time()
+    return HORARIO_INICIO_PREGAO <= t <= HORARIO_FIM_PREGAO
 
-    precos_historicos_serial = {}
-    for ticker, dados in st.session_state.get("precos_historicos", {}).items():
-        precos_historicos_serial[ticker] = [
-            (dt.isoformat() if isinstance(dt, datetime.datetime) else dt, preco)
-            for dt, preco in dados
-        ]
-    snapshot["precos_historicos"] = precos_historicos_serial
+def segundos_ate_abertura(dt):
+    abre = dt.replace(hour=HORARIO_INICIO_PREGAO.hour, minute=0, second=0, microsecond=0)
+    fecha = dt.replace(hour=HORARIO_FIM_PREGAO.hour, minute=0, second=0, microsecond=0)
+    if dt < abre:
+        return int((abre - dt).total_seconds()), abre
+    elif dt > fecha:
+        prox = abre + datetime.timedelta(days=1)
+        return int((prox - dt).total_seconds()), prox
+    else:
+        return 0, abre
 
-    disparos_serial = {}
-    for ticker, pontos in st.session_state.get("disparos", {}).items():
-        disparos_serial[ticker] = [
-            (dt.isoformat() if isinstance(dt, datetime.datetime) else dt, preco)
-            for dt, preco in pontos
-        ]
-    snapshot["disparos"] = disparos_serial
-    return snapshot
+def formatar_duracao(segundos):
+    return str(datetime.timedelta(seconds=int(segundos)))
 
-def _persist_now():
-    snapshot = _estado_snapshot()
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
-    }
-    payload = {"k": STATE_KEY, "v": snapshot}
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE}"
-    try:
-        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=15)
-        if r.status_code not in (200, 201, 204):
-            st.sidebar.error(f"Erro ao salvar estado remoto: {r.text}")
-    except Exception as e:
-        st.sidebar.error(f"Erro ao salvar estado remoto: {e}")
+# ==================================================
+# 🚀 INICIALIZAÇÃO
+# ==================================================
+print("🤖 Robô CLUBE iniciado.")
+estado = carregar_estado_duravel("clube")
 
-    try:
-        os.makedirs("session_data", exist_ok=True)
-        with open(LOCAL_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        st.sidebar.warning(f"⚠️ Erro ao salvar local: {e}")
+if not isinstance(estado, dict):
+    estado = {}
 
-    st.session_state["__last_save_ts"] = agora_lx().timestamp()
+estado.setdefault("ativos", [])
+estado.setdefault("tempo_acumulado", {})
+estado.setdefault("em_contagem", {})
+estado.setdefault("status", {})
+estado.setdefault("historico_alertas", [])
+estado.setdefault("ultima_data_abertura_enviada", None)
 
-def salvar_estado_duravel(force: bool = False):
-    if force:
-        _persist_now()
-        return
-    last = st.session_state.get("__last_save_ts")
-    now_ts = agora_lx().timestamp()
-    if not last or (now_ts - last) >= PERSIST_DEBOUNCE_SECONDS:
-        _persist_now()
+# Converte data, se for datetime
+try:
+    if isinstance(estado["ultima_data_abertura_enviada"], datetime.date):
+        estado["ultima_data_abertura_enviada"] = estado["ultima_data_abertura_enviada"].isoformat()
+    elif not isinstance(estado["ultima_data_abertura_enviada"], str):
+        estado["ultima_data_abertura_enviada"] = None
+except Exception:
+    estado["ultima_data_abertura_enviada"] = None
 
-def carregar_estado_duravel():
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE}?k=eq.{STATE_KEY}&select=v"
-    remoto_ok = False
-    origem = "❌ Nenhum"
+print(f"📦 {len(estado['ativos'])} ativos carregados.")
+print("=" * 60)
 
-    try:
-        r = requests.get(url, headers=headers, timeout=15)
-        if r.status_code == 200 and r.json():
-            estado = r.json()[0]["v"]
-            for k, v in estado.items():
-                if k == "precos_historicos":
-                    precos_reconv = {}
-                    for t, dados in v.items():
-                        reconv = [(datetime.datetime.fromisoformat(dt) if isinstance(dt, str) else dt, p) for dt, p in dados]
-                        precos_reconv[t] = reconv
-                    st.session_state[k] = precos_reconv
-                elif k == "disparos":
-                    disparos_reconv = {}
-                    for t, pontos in v.items():
-                        reconv = [(datetime.datetime.fromisoformat(pt) if isinstance(pt, str) else pt, p) for pt, p in pontos]
-                        disparos_reconv[t] = reconv
-                    st.session_state[k] = disparos_reconv
+# ==================================================
+# 🔁 LOOP PRINCIPAL
+# ==================================================
+while True:
+    now = agora_lx()
+
+    # ==================================================
+    # ⏰ HORÁRIO DE PREGÃO
+    # ==================================================
+    if dentro_pregao(now):
+        data_hoje = str(now.date())
+        ultima = str(estado.get("ultima_data_abertura_enviada", ""))
+
+        # 🔒 Envia mensagem de abertura 1x por dia
+        if ultima != data_hoje:
+            enviar_alerta(
+                "clube",
+                "📣 Pregão Aberto",
+                "<b>O pregão foi iniciado! 🟢</b><br><i>O robô do CLUBE está monitorando os ativos.</i>",
+                "🤖 Robô CLUBE iniciando monitoramento — Pregão Aberto!"
+            )
+            estado["ultima_data_abertura_enviada"] = data_hoje
+            salvar_estado_duravel("clube", estado)
+            print(f"[{now.strftime('%H:%M:%S')}] 📣 Mensagem de abertura enviada ({data_hoje}).\n")
+
+        print(f"[{now.strftime('%H:%M:%S')}] 🟢 Monitorando {len(estado['ativos'])} ativos...")
+
+        tickers_para_remover = []
+
+        for ativo in estado["ativos"]:
+            ticker = ativo["ticker"]
+            preco_alvo = ativo["preco"]
+            operacao = ativo["operacao"]
+            tk_full = f"{ticker}.SA" if not ticker.endswith(".SA") else ticker
+
+            try:
+                preco_atual = obter_preco_atual(tk_full)
+            except Exception as e:
+                print(f"⚠️ Erro ao obter preço de {ticker}: {e}")
+                continue
+
+            if not preco_atual or preco_atual <= 0:
+                print(f"⚠️ Preço inválido para {ticker}. Pulando...")
+                continue
+
+            condicao = (
+                (operacao == "compra" and preco_atual >= preco_alvo)
+                or (operacao == "venda" and preco_atual <= preco_alvo)
+            )
+
+            # -----------------------------
+            # BLOCO DE CONTAGEM
+            # -----------------------------
+            if condicao:
+                estado["status"][ticker] = "🟡 Em contagem"
+
+                if not estado["em_contagem"].get(ticker, False):
+                    estado["em_contagem"][ticker] = True
+                    estado["tempo_acumulado"][ticker] = 0
+                    print(f"⚠️ {ticker} atingiu o alvo ({preco_alvo:.2f}). Iniciando contagem...")
                 else:
-                    st.session_state[k] = v
-            st.sidebar.info("Conectado na nuvem! ✅")
-            remoto_ok = True
-            origem = "☁️ Supabase"
-        else:
-            st.sidebar.info("ℹ️ Nenhum estado remoto ainda.")
-    except Exception as e:
-        st.sidebar.error(f"Erro ao carregar estado remoto: {e}")
+                    estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
+                    print(
+                        f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados."
+                    )
 
-    if not remoto_ok and os.path.exists(LOCAL_STATE_FILE):
-        try:
-            with open(LOCAL_STATE_FILE, "r", encoding="utf-8") as f:
-                estado = json.load(f)
-            for k, v in estado.items():
-                if k == "precos_historicos":
-                    precos_reconv = {}
-                    for t, dados in v.items():
-                        reconv = [(datetime.datetime.fromisoformat(dt) if isinstance(dt, str) else dt, p) for dt, p in dados]
-                        precos_reconv[t] = reconv
-                    st.session_state[k] = precos_reconv
-                elif k == "disparos":
-                    disparos_reconv = {}
-                    for t, pontos in v.items():
-                        reconv = [(datetime.datetime.fromisoformat(pt) if isinstance(pt, str) else pt, p) for pt, p in pontos]
-                        disparos_reconv[t] = reconv
-                    st.session_state[k] = disparos_reconv
-                else:
-                    st.session_state[k] = v
-            st.sidebar.info("💾 Estado carregado do local (fallback)!")
-            origem = "📁 Local"
-        except Exception as e:
-            st.sidebar.error(f"Erro no fallback local: {e}")
+                # 🚀 Disparo do alerta
+                if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
+                    estado["status"][ticker] = "🚀 Disparado"
 
-    for t in st.session_state.get("tempo_acumulado", {}):
-        if st.session_state.tempo_acumulado.get(t, 0) > 0 and not st.session_state.ultimo_update_tempo.get(t):
-            st.session_state.ultimo_update_tempo[t] = agora_lx().isoformat()
+                    msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
+                    ticker_symbol_sem_ext = ticker.replace(".SA", "")
 
-    st.session_state["origem_estado"] = origem
-    st.session_state["__carregado_ok__"] = (origem in ("☁️ Supabase", "📁 Local"))
+                    msg_tg = f"""
+💥 <b>ALERTA DE {msg_op.upper()} ATIVADA!</b>\n\n
+<b>Ticker:</b> {ticker_symbol_sem_ext}\n
+<b>Preço alvo:</b> R$ {preco_alvo:.2f}\n
+<b>Preço atual:</b> R$ {preco_atual:.2f}\n\n
+📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>\n\n
+<em>
+COMPLIANCE: Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.
+A compra ou venda é de total decisão e responsabilidade do Destinatário.
+Esta informação é CONFIDENCIAL, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.
+Se você NÃO for DESTINATÁRIO ou pessoa autorizada a recebê-lo, NÃO PODE usar, copiar, transmitir, retransmitir
+ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.
+A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
+</em>
+""".strip()
 
-def apagar_estado_remoto():
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE}?k=eq.{STATE_KEY}"
-    try:
-        requests.delete(url, headers=headers, timeout=15)
-    except Exception as e:
-        st.sidebar.error(f"Erro ao apagar estado remoto: {e}")
+                    msg_html = f"""
+<html>
+  <body style="font-family:Arial,sans-serif; background-color:#0b1220; color:#e5e7eb; padding:20px;">
+    <h2 style="color:#3b82f6;">💥 ALERTA DE {msg_op.upper()} ATIVADA!</h2>
+    <p><b>Ticker:</b> {ticker_symbol_sem_ext}</p>
+    <p><b>Preço alvo:</b> R$ {preco_alvo:.2f}</p>
+    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>    
+    <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}" style="color:#60a5fa;">Ver gráfico no TradingView</a></p>
+    <hr style="border:1px solid #3b82f6; margin:20px 0;">
+    <p style="font-size:11px; line-height:1.4; color:#9ca3af;">
+      <b>COMPLIANCE:</b> Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.<br>
+      A compra ou venda é de total decisão e responsabilidade do Destinatário.<br>
+      Esta informação é <b>CONFIDENCIAL</b>, de propriedade do Canal 1milhao e de seu DESTINATÁRIO tão somente.<br>
+      Se você <b>NÃO</b> for DESTINATÁRIO ou pessoa autorizada a recebê-lo, <b>NÃO PODE</b> usar, copiar, transmitir, retransmitir
+      ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.<br>
+      A Lista de Ações do Canal 1milhao é devidamente <b>REGISTRADA.</b>
+    </p>
+  </body>
+</html>
+""".strip()
 
-def ensure_color_map():
-    if "ticker_colors" not in st.session_state:
-        st.session_state.ticker_colors = {}
+                    enviar_alerta("clube", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
 
-def inicializar_estado():
-    defaults = {
-        "ativos": [], "historico_alertas": [], "log_monitoramento": [],
-        "tempo_acumulado": {}, "em_contagem": {}, "status": {},
-        "precos_historicos": {}, "ultimo_update_tempo": {},
-        "pausado": False, "ultimo_estado_pausa": None,
-        "disparos": {}, "__last_save_ts": None,
-        "__carregado_ok__": False, "ultima_data_abertura_enviada": None,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-    ensure_color_map()
+                    estado["historico_alertas"].append({
+                        "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "ticker": ticker,
+                        "operacao": operacao,
+                        "preco_alvo": preco_alvo,
+                        "preco_atual": preco_atual
+                    })
 
-inicializar_estado()
-carregar_estado_duravel()
+                    tickers_para_remover.append(ticker)
+                    estado["em_contagem"][ticker] = False
+                    estado["tempo_acumulado"][ticker] = 0
 
-# (demais funções, monitoramento e interface — permanecem iguais ao seu script original)
-# ... (o conteúdo completo do seu arquivo original continua daqui)
+            else:
+                # Saiu da zona de preço
+                if estado["em_contagem"].get(ticker, False):
+                    print(f"❌ {ticker} saiu da zona de preço.")
+                    estado["em_contagem"][ticker] = False
+                    estado["tempo_acumulado"][ticker] = 0
+                    estado["status"][ticker] = "🔴 Fora da zona"
 
+        # -----------------------------
+        # 🧹 LIMPEZA PÓS-ATIVAÇÃO
+        # -----------------------------
+        if tickers_para_remover:
+            estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in tickers_para_remover]
+            for t in tickers_para_remover:
+                estado["tempo_acumulado"].pop(t, None)
+                estado["em_contagem"].pop(t, None)
+                estado["status"][t] = "✅ Ativado (removido)"
+            print(f"🧹 Removidos após ativação: {', '.join(tickers_para_remover)}")
+
+        salvar_estado_duravel("clube", estado)
+        print("💾 Estado salvo.\n")
+        time.sleep(INTERVALO_VERIFICACAO)
+
+    # ==================================================
+    # 🚫 FORA DO PREGÃO
+    # ==================================================
+    else:
+        faltam, prox = segundos_ate_abertura(now)
+        print(
+            f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')})."
+        )
+        time.sleep(min(faltam, 3600))

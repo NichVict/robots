@@ -1,0 +1,2 @@
+2025-10-19 12:29:17,195:INFO - HTTP Request: GET https://kflwifvrkcqmrzgpvhqe.supabase.co/rest/v1/kv_state_losscurto?select=k%2Cv "HTTP/1.1 200 OK"
+2025-10-19 12:30:34,346:INFO - HTTP Request: GET https://kflwifvrkcqmrzgpvhqe.supabase.co/rest/v1/kv_state_losscurto?select=k%2Cv "HTTP/1.1 200 OK"
