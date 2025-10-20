@@ -1,13 +1,15 @@
 # core/state.py
+from __future__ import annotations
+
 import json
+from typing import Optional
 from supabase import create_client, Client
 from core.config import ROBOTS
 
 # ==================================================
 # 🔗 Conexões Supabase dinâmicas por robô
 # ==================================================
-SUPABASES = {}
-
+SUPABASES: dict[str, Client] = {}
 for nome, cfg in ROBOTS.items():
     url = cfg.get("SUPABASE_URL")
     key = cfg.get("SUPABASE_KEY")
@@ -29,79 +31,115 @@ TABELAS = {
     "loss_curtissimo": "kv_state_losscurtissimo",
 }
 
-# ==================================================
-# 📦 Funções de persistência durável
-# ==================================================
-def carregar_estado_duravel(nome_robo: str):
-    """Carrega o estado do robô a partir do Supabase."""
-    print(f"🔄 Carregando estado do robô '{nome_robo}'...")
+DEFAULT_STATE = {
+    "ativos": [],
+    "tempo_acumulado": {},
+    "em_contagem": {},
+    "status": {},
+}
 
-    sb: Client = SUPABASES.get(nome_robo)
+def _sb_and_table(nome_robo: str) -> tuple[Client, str, str]:
+    sb: Optional[Client] = SUPABASES.get(nome_robo)
     if not sb:
-        print(f"⚠️ Supabase não configurado para '{nome_robo}'. Usando estado vazio.")
-        return {"ativos": [], "tempo_acumulado": {}, "em_contagem": {}, "status": {}}
-
+        raise ValueError(f"Supabase não configurado para '{nome_robo}'.")
     tabela = TABELAS.get(nome_robo)
     if not tabela:
         raise ValueError(f"Tabela não definida para o robô '{nome_robo}'.")
+    chave = f"{nome_robo}_przo_v1"
+    return sb, tabela, chave
+
+# ==================================================
+# 📥 Carregar
+# ==================================================
+def carregar_estado_duravel(nome_robo: str) -> dict:
+    """Carrega o estado do robô a partir do registro-único (k = '<robo>_przo_v1')."""
+    print(f"🔄 Carregando estado do robô '{nome_robo}'...")
+    try:
+        sb, tabela, chave = _sb_and_table(nome_robo)
+    except Exception as e:
+        print(f"⚠️ {e}")
+        return DEFAULT_STATE.copy()
 
     try:
-        data = sb.table(tabela).select("k", "v").execute()
-        estado = {item["k"]: item["v"] for item in data.data}
-        print(f"✅ Estado carregado ({len(estado)} chaves).")
-
-        return list(estado.values())[0] if estado else {
-            "ativos": [],
-            "tempo_acumulado": {},
-            "em_contagem": {},
-            "status": {}
-        }
-
+        res = sb.table(tabela).select("k,v").eq("k", chave).execute()
+        if res.data:
+            estado = res.data[0]["v"]
+            if isinstance(estado, dict):
+                print("✅ Estado carregado (1 chave).")
+                return estado
+        print("ℹ️ Nenhum estado encontrado — usando defaults.")
+        return DEFAULT_STATE.copy()
     except Exception as e:
         print(f"⚠️ Erro ao carregar estado de {nome_robo}: {e}")
-        return {"ativos": [], "tempo_acumulado": {}, "em_contagem": {}, "status": {}}
+        return DEFAULT_STATE.copy()
 
-
-def salvar_estado_duravel(nome_robo: str, estado: dict):
-    """Salva o estado do robô no Supabase."""
-    sb: Client = SUPABASES.get(nome_robo)
-    if not sb:
-        print(f"⚠️ Supabase não configurado para '{nome_robo}'. Estado não será salvo.")
+# ==================================================
+# 💾 Salvar (SEGURO)
+# ==================================================
+def salvar_estado_duravel(nome_robo: str, estado: dict) -> None:
+    """
+    Salva o estado do robô por upsert NA MESMA CHAVE.
+    ⚠️ NÃO realiza nenhum DELETE em massa.
+    """
+    try:
+        sb, tabela, chave = _sb_and_table(nome_robo)
+    except Exception as e:
+        print(f"⚠️ {e}")
         return
 
-    tabela = TABELAS.get(nome_robo)
-    if not tabela:
-        raise ValueError(f"Tabela não definida para o robô '{nome_robo}'.")
-
     try:
-        sb.table(tabela).upsert({"k": f"{nome_robo}_przo_v1", "v": estado}).execute()
+        sb.table(tabela).upsert({"k": chave, "v": estado}).execute()
         print(f"💾 Estado de '{nome_robo}' salvo com sucesso.")
     except Exception as e:
         print(f"⚠️ Erro ao salvar estado de {nome_robo}: {e}")
 
-
-def salvar_estado_duravel(nome_robo: str, estado: dict):
-    """Salva o estado do robô no Supabase (substituição total, sem duplicar registros)."""
-    sb: Client = SUPABASES.get(nome_robo)
-    if not sb:
-        print(f"⚠️ Supabase não configurado para '{nome_robo}'. Estado não será salvo.")
+# ==================================================
+# 🧹 Apagar (SEMPRE GRANULAR)
+# ==================================================
+def apagar_estado_duravel(nome_robo: str, apenas_ticker: Optional[str] = None) -> None:
+    """
+    Remoção segura:
+      - Sem `apenas_ticker`: NÃO faz nada (bloqueia limpeza total).
+      - Com `apenas_ticker`: remove só aquele ticker do estado e regrava.
+    Use após alerta confirmado.
+    """
+    try:
+        sb, tabela, chave = _sb_and_table(nome_robo)
+    except Exception as e:
+        print(f"⚠️ {e}")
         return
 
-    tabela = TABELAS.get(nome_robo)
-    if not tabela:
-        raise ValueError(f"Tabela não definida para o robô '{nome_robo}'.")
-
     try:
-        chave = f"{nome_robo}_przo_v1"
+        # Carrega o registro atual
+        res = sb.table(tabela).select("k,v").eq("k", chave).execute()
+        if not res.data:
+            print(f"ℹ️ Nenhum estado para '{nome_robo}'.")
+            return
+        estado = res.data[0]["v"] or {}
 
-        # 🔥 Apaga qualquer registro antigo antes de salvar
-        sb.table(tabela).delete().neq("k", chave).execute()
+        if not apenas_ticker:
+            print(f"🚫 Ação bloqueada: tentativa de apagar o estado completo de '{nome_robo}'.")
+            print("   Use apagar_estado_duravel(nome_robo, apenas_ticker='TICKER').")
+            return
 
-        # 💾 Upsert substitui o registro único
-        sb.table(tabela).upsert({"k": chave, "v": estado}).execute()
-        print(f"💾 Estado de '{nome_robo}' salvo com sucesso (substituição completa).")
+        # Remove o ticker
+        ativos_antes = len(estado.get("ativos", []))
+        estado["ativos"] = [a for a in estado.get("ativos", []) if a.get("ticker") != apenas_ticker]
+        # Zera auxiliares
+        for campo in ("tempo_acumulado", "em_contagem", "status"):
+            if isinstance(estado.get(campo), dict):
+                estado[campo].pop(apenas_ticker, None)
+
+        ativos_depois = len(estado.get("ativos", []))
+        if ativos_depois < ativos_antes:
+            sb.table(tabela).upsert({"k": chave, "v": estado}).execute()
+            print(f"🧹 Ticker '{apenas_ticker}' removido do estado de '{nome_robo}'.")
+        else:
+            print(f"ℹ️ Ticker '{apenas_ticker}' não estava no estado de '{nome_robo}'.")
+
     except Exception as e:
-        print(f"⚠️ Erro ao salvar estado de {nome_robo}: {e}")
+        print(f"⚠️ Erro ao tentar apagar estado de {nome_robo}: {e}")
+
 
 
 
