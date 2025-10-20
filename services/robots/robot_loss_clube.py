@@ -1,9 +1,12 @@
+# ==================================================
+# 🤖 ROBÔ LOSS CLUBE — VERSÃO DURÁVEL E SEGURA
+# ==================================================
 # services/robots/robot_loss_clube.py
 # -*- coding: utf-8 -*-
 import time
 import datetime
 from zoneinfo import ZoneInfo
-from core.state import carregar_estado_duravel, salvar_estado_duravel
+from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
 
@@ -86,7 +89,7 @@ while True:
             enviar_alerta(
                 "loss_clube",
                 "📣 Pregão Aberto",
-                "<b>O pregão foi iniciado! 🟢</b><br><i>O robô LOSS CLUBE está monitorando os ativos.</i>",
+                "<b>O pregão foi iniciado! 🟢</b><br><i>O robô LOSS CLUBE está monitorando stops de encerramento.</i>",
                 "🤖 Robô LOSS CLUBE ativo — Pregão Aberto!"
             )
             estado["ultima_data_abertura_enviada"] = data_hoje
@@ -113,15 +116,12 @@ while True:
                 print(f"⚠️ Preço inválido para {ticker}. Pulando...")
                 continue
 
-            # Compra: preço atual >= alvo | Venda: preço atual <= alvo
+            # Condição de stop inversa
             condicao = (
                 (operacao == "compra" and preco_atual >= preco_alvo)
                 or (operacao == "venda" and preco_atual <= preco_alvo)
             )
 
-            # -----------------------------
-            # BLOCO DE CONTAGEM
-            # -----------------------------
             if condicao:
                 estado["status"][ticker] = "🟡 Em contagem"
 
@@ -131,14 +131,10 @@ while True:
                     print(f"⚠️ {ticker} entrou na zona de STOP ({preco_alvo:.2f}). Iniciando contagem...")
                 else:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
-                    print(
-                        f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados."
-                    )
+                    print(f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.")
 
-                # 🚀 Disparo do ENCERRAMENTO (STOP)
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
                     estado["status"][ticker] = "🚀 Encerrado (STOP)"
-
                     msg_op = "VENDA" if operacao == "venda" else "COMPRA"
                     msg_anterior = "COMPRA" if operacao == "venda" else "VENDA A DESCOBERTO"
                     ticker_symbol_sem_ext = ticker.replace(".SA", "")
@@ -150,15 +146,7 @@ while True:
 <b>Operação para encerrar:</b> {msg_op.upper()}\n
 <b>STOP (alvo):</b> R$ {preco_alvo:.2f}\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n\n
-📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>\n\n
-<em>
-COMPLIANCE: Esta mensagem é uma sugestão de ENCERRAMENTO baseada na CARTEIRA CLUBE.
-A execução é de total decisão e responsabilidade do Destinatário.
-Esta informação é CONFIDENCIAL, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.
-Se você NÃO for DESTINATÁRIO ou pessoa autorizada a recebê-lo, NÃO PODE usar, copiar, transmitir, retransmitir
-ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.
-A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
-</em>
+📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>
 """.strip()
 
                     msg_html = f"""
@@ -199,7 +187,6 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
                     estado["tempo_acumulado"][ticker] = 0
 
             else:
-                # Saiu da zona de STOP
                 if estado["em_contagem"].get(ticker, False):
                     print(f"❌ {ticker} saiu da zona de STOP.")
                     estado["em_contagem"][ticker] = False
@@ -215,6 +202,12 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
                 estado["tempo_acumulado"].pop(t, None)
                 estado["em_contagem"].pop(t, None)
                 estado["status"][t] = "✅ Encerrado (removido)"
+                # 🔥 Limpeza seletiva no Supabase
+                try:
+                    apagar_estado_duravel("loss_clube", apenas_ticker=t)
+                    print(f"🗑️ Registro de {t} removido do Supabase (loss_clube).")
+                except Exception as e:
+                    print(f"⚠️ Erro ao limpar {t} no Supabase: {e}")
             print(f"🧹 Removidos após STOP: {', '.join(tickers_para_remover)}")
 
         salvar_estado_duravel("loss_clube", estado)
@@ -226,8 +219,7 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
     # ==================================================
     else:
         faltam, prox = segundos_ate_abertura(now)
-        print(
-            f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')})."
-        )
+        print(f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).")
         time.sleep(min(faltam, 3600))
+
 

@@ -1,12 +1,12 @@
 # ==================================================
-# 🤖 ROBÔ LOSS CURTO — VERSÃO DURÁVEL
+# 🤖 ROBÔ LOSS CURTO — VERSÃO DURÁVEL E SEGURA
 # ==================================================
 # services/robots/robot_loss_curto.py
 # -*- coding: utf-8 -*-
 import time
 import datetime
 from zoneinfo import ZoneInfo
-from core.state import carregar_estado_duravel, salvar_estado_duravel
+from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
 
@@ -155,15 +155,7 @@ while True:
 <b>Operação para encerrar:</b> {msg_op_encerrar}\n\n
 <b>STOP (alvo):</b> R$ {preco_alvo:.2f}\n\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n\n
-📊 <a href='https://br.tradingview.com/symbols/{ticker_sem_ext}'>Abrir gráfico no TradingView</a>\n\n
-<em>
-COMPLIANCE: Esta mensagem é uma sugestão de ENCERRAMENTO baseada na CARTEIRA CURTO PRAZO.
-A execução é de total decisão e responsabilidade do Destinatário.
-Esta informação é CONFIDENCIAL, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.
-Se você NÃO for DESTINATÁRIO ou pessoa autorizada a recebê-lo, NÃO PODE usar, copiar, transmitir, retransmitir
-ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.
-A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
-</em>
+📊 <a href='https://br.tradingview.com/symbols/{ticker_sem_ext}'>Abrir gráfico no TradingView</a>
 """.strip()
 
                     msg_html = f"""
@@ -220,6 +212,12 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
                 estado["tempo_acumulado"].pop(t, None)
                 estado["em_contagem"].pop(t, None)
                 estado["status"][t] = "✅ Encerrado (removido)"
+                # 🔥 Limpeza seletiva no Supabase
+                try:
+                    apagar_estado_duravel("loss_curto", apenas_ticker=t)
+                    print(f"🗑️ Registro de {t} removido do Supabase (loss_curto).")
+                except Exception as e:
+                    print(f"⚠️ Erro ao limpar {t} no Supabase: {e}")
             print(f"🧹 Removidos após ENCERRAMENTO: {', '.join(tickers_para_remover)}")
 
         salvar_estado_duravel("loss_curto", estado)
@@ -231,9 +229,8 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
     # ==================================================
     else:
         faltam, prox = segundos_ate_abertura(now)
-        print(
-            f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')})."
-        )
+        print(f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).")
         time.sleep(min(faltam, 3600))
+
 
 

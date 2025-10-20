@@ -3,7 +3,7 @@
 import time
 import datetime
 from zoneinfo import ZoneInfo
-from core.state import carregar_estado_duravel, salvar_estado_duravel
+from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
 
@@ -56,7 +56,6 @@ estado.setdefault("status", {})
 estado.setdefault("historico_alertas", [])
 estado.setdefault("ultima_data_abertura_enviada", None)
 
-# Converte data, se for datetime
 try:
     if isinstance(estado["ultima_data_abertura_enviada"], datetime.date):
         estado["ultima_data_abertura_enviada"] = estado["ultima_data_abertura_enviada"].isoformat()
@@ -74,9 +73,6 @@ print("=" * 60)
 while True:
     now = agora_lx()
 
-    # ==================================================
-    # ⏰ HORÁRIO DE PREGÃO
-    # ==================================================
     if dentro_pregao(now):
         data_hoje = str(now.date())
         ultima = str(estado.get("ultima_data_abertura_enviada", ""))
@@ -130,9 +126,7 @@ while True:
                     print(f"⚠️ {ticker} atingiu o alvo ({preco_alvo:.2f}). Iniciando contagem...")
                 else:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
-                    print(
-                        f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados."
-                    )
+                    print(f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.")
 
                 # 🚀 Disparo do alerta
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
@@ -146,15 +140,7 @@ while True:
 <b>Ticker:</b> {ticker_symbol_sem_ext}\n
 <b>Preço alvo:</b> R$ {preco_alvo:.2f}\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n\n
-📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>\n\n
-<em>
-COMPLIANCE: Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.
-A compra ou venda é de total decisão e responsabilidade do Destinatário.
-Esta informação é CONFIDENCIAL, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.
-Se você NÃO for DESTINATÁRIO ou pessoa autorizada a recebê-lo, NÃO PODE usar, copiar, transmitir, retransmitir
-ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.
-A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
-</em>
+📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>
 """.strip()
 
                     msg_html = f"""
@@ -163,17 +149,10 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
     <h2 style="color:#3b82f6;">💥 ALERTA DE {msg_op.upper()} ATIVADA!</h2>
     <p><b>Ticker:</b> {ticker_symbol_sem_ext}</p>
     <p><b>Preço alvo:</b> R$ {preco_alvo:.2f}</p>
-    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>    
-    <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}" style="color:#60a5fa;">Ver gráfico no TradingView</a></p>
+    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>
+    <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}" style="color:#60a5fa;">Ver gráfico</a></p>
     <hr style="border:1px solid #3b82f6; margin:20px 0;">
-    <p style="font-size:11px; line-height:1.4; color:#9ca3af;">
-      <b>COMPLIANCE:</b> Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.<br>
-      A compra ou venda é de total decisão e responsabilidade do Destinatário.<br>
-      Esta informação é <b>CONFIDENCIAL</b>, de propriedade do Canal 1milhao e de seu DESTINATÁRIO tão somente.<br>
-      Se você <b>NÃO</b> for DESTINATÁRIO ou pessoa autorizada a recebê-lo, <b>NÃO PODE</b> usar, copiar, transmitir, retransmitir
-      ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.<br>
-      A Lista de Ações do Canal 1milhao é devidamente <b>REGISTRADA.</b>
-    </p>
+    <p style="font-size:11px; color:#9ca3af;">Mensagem de alerta automática do robô CURTO.</p>
   </body>
 </html>
 """.strip()
@@ -193,7 +172,6 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
                     estado["tempo_acumulado"][ticker] = 0
 
             else:
-                # Saiu da zona de preço
                 if estado["em_contagem"].get(ticker, False):
                     print(f"❌ {ticker} saiu da zona de preço.")
                     estado["em_contagem"][ticker] = False
@@ -209,21 +187,23 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
                 estado["tempo_acumulado"].pop(t, None)
                 estado["em_contagem"].pop(t, None)
                 estado["status"][t] = "✅ Ativado (removido)"
+                # 🔥 Limpeza seletiva no Supabase
+                try:
+                    apagar_estado_duravel("curto", apenas_ticker=t)
+                    print(f"🗑️ Registro de {t} removido do Supabase (curto).")
+                except Exception as e:
+                    print(f"⚠️ Erro ao limpar {t} no Supabase: {e}")
             print(f"🧹 Removidos após ativação: {', '.join(tickers_para_remover)}")
 
         salvar_estado_duravel("curto", estado)
         print("💾 Estado salvo.\n")
         time.sleep(INTERVALO_VERIFICACAO)
 
-    # ==================================================
-    # 🚫 FORA DO PREGÃO
-    # ==================================================
     else:
         faltam, prox = segundos_ate_abertura(now)
-        print(
-            f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')})."
-        )
+        print(f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).")
         time.sleep(min(faltam, 3600))
+
 
 
 
