@@ -55,7 +55,10 @@ estado.setdefault("em_contagem", {})
 estado.setdefault("status", {})
 estado.setdefault("historico_alertas", [])
 estado.setdefault("ultima_data_abertura_enviada", None)
+# evita alertas duplicados no mesmo dia
+estado.setdefault("eventos_enviados", {})
 
+# Converte data, se vier como datetime
 try:
     if isinstance(estado["ultima_data_abertura_enviada"], datetime.date):
         estado["ultima_data_abertura_enviada"] = estado["ultima_data_abertura_enviada"].isoformat()
@@ -96,7 +99,7 @@ while True:
 
         tickers_para_remover = []
 
-        for ativo in estado["ativos"]:
+        for ativo in list(estado["ativos"]):
             ticker = ativo["ticker"]
             preco_alvo = ativo["preco"]
             operacao = ativo["operacao"]
@@ -131,14 +134,19 @@ while True:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
                     print(f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.")
 
-                # 🚀 Disparo do alerta
+                # 🚀 Disparo do alerta (dedupe por dia)
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
-                    estado["status"][ticker] = "🚀 Disparado"
+                    event_id = f"curtissimo|{ticker}|{operacao}|{preco_alvo:.2f}|{data_hoje}"
+                    if estado["eventos_enviados"].get(event_id):
+                        print(f"🔁 {ticker}: alerta já enviado hoje. Ignorando.")
+                    else:
+                        estado["eventos_enviados"][event_id] = True
+                        estado["status"][ticker] = "🚀 Disparado"
 
-                    msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
-                    ticker_symbol_sem_ext = ticker.replace(".SA", "")
+                        msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
+                        ticker_symbol_sem_ext = ticker.replace(".SA", "")
 
-                    msg_tg = f"""
+                        msg_tg = f"""
 💥 <b>ALERTA DE {msg_op.upper()} ATIVADA!</b>\n\n
 <b>Ticker:</b> {ticker_symbol_sem_ext}\n
 <b>Preço alvo:</b> R$ {preco_alvo:.2f}\n
@@ -154,7 +162,7 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
 </em>
 """.strip()
 
-                    msg_html = f"""
+                        msg_html = f"""
 <html>
   <body style="font-family:Arial,sans-serif; background-color:#0b1220; color:#e5e7eb; padding:20px;">
     <h2 style="color:#3b82f6;">💥 ALERTA DE {msg_op.upper()} ATIVADA!</h2>
@@ -175,19 +183,19 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
 </html>
 """.strip()
 
-                    enviar_alerta("curtissimo", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
+                        enviar_alerta("curtissimo", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
 
-                    estado["historico_alertas"].append({
-                        "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
-                        "ticker": ticker,
-                        "operacao": operacao,
-                        "preco_alvo": preco_alvo,
-                        "preco_atual": preco_atual
-                    })
+                        estado["historico_alertas"].append({
+                            "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
+                            "ticker": ticker,
+                            "operacao": operacao,
+                            "preco_alvo": preco_alvo,
+                            "preco_atual": preco_atual
+                        })
 
-                    tickers_para_remover.append(ticker)
-                    estado["em_contagem"][ticker] = False
-                    estado["tempo_acumulado"][ticker] = 0
+                        tickers_para_remover.append(ticker)
+                        estado["em_contagem"][ticker] = False
+                        estado["tempo_acumulado"][ticker] = 0
 
             else:
                 if estado["em_contagem"].get(ticker, False):
@@ -196,6 +204,7 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
                     estado["tempo_acumulado"][ticker] = 0
                     estado["status"][ticker] = "🔴 Fora da zona"
 
+        # 🧹 LIMPEZA PÓS-ATIVAÇÃO (apenas no estado em memória + regrava a mesma chave)
         if tickers_para_remover:
             estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in tickers_para_remover]
             for t in tickers_para_remover:
@@ -208,12 +217,16 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
         print("💾 Estado salvo.\n")
         time.sleep(INTERVALO_VERIFICACAO)
 
+    # ==================================================
+    # 🚫 FORA DO PREGÃO
+    # ==================================================
     else:
         faltam, prox = segundos_ate_abertura(now)
         print(
             f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')})."
         )
         time.sleep(min(faltam, 3600))
+
 
 
 

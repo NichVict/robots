@@ -1,6 +1,3 @@
-# ==================================================
-# 🤖 ROBÔ CLUBE — Monitoramento Automático
-# ==================================================
 # services/robots/robot_clube.py
 # -*- coding: utf-8 -*-
 import time
@@ -58,6 +55,8 @@ estado.setdefault("em_contagem", {})
 estado.setdefault("status", {})
 estado.setdefault("historico_alertas", [])
 estado.setdefault("ultima_data_abertura_enviada", None)
+# evita alertas duplicados no mesmo dia
+estado.setdefault("eventos_enviados", {})
 
 # Converte data, se for datetime
 try:
@@ -100,7 +99,7 @@ while True:
 
         tickers_para_remover = []
 
-        for ativo in estado["ativos"]:
+        for ativo in list(estado["ativos"]):
             ticker = ativo["ticker"]
             preco_alvo = ativo["preco"]
             operacao = ativo["operacao"]
@@ -133,18 +132,21 @@ while True:
                     print(f"⚠️ {ticker} atingiu o alvo ({preco_alvo:.2f}). Iniciando contagem...")
                 else:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
-                    print(
-                        f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados."
-                    )
+                    print(f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.")
 
-                # 🚀 Disparo do alerta
+                # 🚀 Disparo do alerta (dedupe por dia)
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
-                    estado["status"][ticker] = "🚀 Disparado"
+                    event_id = f"clube|{ticker}|{operacao}|{preco_alvo:.2f}|{data_hoje}"
+                    if estado["eventos_enviados"].get(event_id):
+                        print(f"🔁 {ticker}: alerta já enviado hoje. Ignorando.")
+                    else:
+                        estado["eventos_enviados"][event_id] = True
+                        estado["status"][ticker] = "🚀 Disparado"
 
-                    msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
-                    ticker_symbol_sem_ext = ticker.replace(".SA", "")
+                        msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
+                        ticker_symbol_sem_ext = ticker.replace(".SA", "")
 
-                    msg_tg = f"""
+                        msg_tg = f"""
 💥 <b>ALERTA DE {msg_op.upper()} ATIVADA!</b>\n\n
 <b>Ticker:</b> {ticker_symbol_sem_ext}\n
 <b>Preço alvo:</b> R$ {preco_alvo:.2f}\n
@@ -160,13 +162,13 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
 </em>
 """.strip()
 
-                    msg_html = f"""
+                        msg_html = f"""
 <html>
   <body style="font-family:Arial,sans-serif; background-color:#0b1220; color:#e5e7eb; padding:20px;">
     <h2 style="color:#3b82f6;">💥 ALERTA DE {msg_op.upper()} ATIVADA!</h2>
     <p><b>Ticker:</b> {ticker_symbol_sem_ext}</p>
     <p><b>Preço alvo:</b> R$ {preco_alvo:.2f}</p>
-    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>    
+    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>
     <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}" style="color:#60a5fa;">Ver gráfico no TradingView</a></p>
     <hr style="border:1px solid #3b82f6; margin:20px 0;">
     <p style="font-size:11px; line-height:1.4; color:#9ca3af;">
@@ -181,31 +183,28 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
 </html>
 """.strip()
 
-                    enviar_alerta("clube", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
+                        enviar_alerta("clube", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
 
-                    estado["historico_alertas"].append({
-                        "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
-                        "ticker": ticker,
-                        "operacao": operacao,
-                        "preco_alvo": preco_alvo,
-                        "preco_atual": preco_atual
-                    })
+                        estado["historico_alertas"].append({
+                            "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
+                            "ticker": ticker,
+                            "operacao": operacao,
+                            "preco_alvo": preco_alvo,
+                            "preco_atual": preco_atual
+                        })
 
-                    tickers_para_remover.append(ticker)
-                    estado["em_contagem"][ticker] = False
-                    estado["tempo_acumulado"][ticker] = 0
+                        tickers_para_remover.append(ticker)
+                        estado["em_contagem"][ticker] = False
+                        estado["tempo_acumulado"][ticker] = 0
 
             else:
-                # Saiu da zona de preço
                 if estado["em_contagem"].get(ticker, False):
                     print(f"❌ {ticker} saiu da zona de preço.")
                     estado["em_contagem"][ticker] = False
                     estado["tempo_acumulado"][ticker] = 0
                     estado["status"][ticker] = "🔴 Fora da zona"
 
-        # -----------------------------
-        # 🧹 LIMPEZA PÓS-ATIVAÇÃO
-        # -----------------------------
+        # 🧹 LIMPEZA PÓS-ATIVAÇÃO (só no estado + regrava a mesma chave)
         if tickers_para_remover:
             estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in tickers_para_remover]
             for t in tickers_para_remover:
