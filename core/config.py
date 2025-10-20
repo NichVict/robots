@@ -9,8 +9,8 @@ load_dotenv()
 # 🌍 CONFIGURAÇÕES GERAIS
 # ================================
 TZ = os.getenv("TZ", "Europe/Lisbon")
-HORARIO_INICIO_PREGAO = os.getenv("HORARIO_INICIO_PREGAO", "14:00")
-HORARIO_FIM_PREGAO = os.getenv("HORARIO_FIM_PREGAO", "21:00")
+HORARIO_INICIO_PREGAO = os.getenv("HORARIO_INICIO_PREGAO", "09:00")
+HORARIO_FIM_PREGAO = os.getenv("HORARIO_FIM_PREGAO", "23:00")
 
 # ================================
 # 🔐 E-MAIL
