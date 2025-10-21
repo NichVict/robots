@@ -6,6 +6,28 @@ from zoneinfo import ZoneInfo
 from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
+# ==================================================
+# 🧾 AJUSTE DE LOGS PARA O RENDER
+# ==================================================
+import sys
+import logging
+
+# Garante que prints apareçam em tempo real no Render
+print = lambda *args, **kwargs: __builtins__.print(*args, **kwargs, flush=True)
+
+# Força o logging a usar stdout (Render exibe stdout)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
+    force=True
+)
+
+# Silencia logs chatos de bibliotecas HTTP
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+
 
 # ==================================================
 # ⚙️ CONFIGURAÇÕES
