@@ -140,7 +140,14 @@ while True:
 <b>Ticker:</b> {ticker_symbol_sem_ext}\n
 <b>Preço alvo:</b> R$ {preco_alvo:.2f}\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n\n
-📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>
+📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>\n\n
+COMPLIANCE: Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.\n
+A compra ou venda é de total decisão e responsabilidade do Destinatário.\n
+Esta informação é CONFIDENCIAL, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.\n
+Se você NÃO for DESTINATÁRIO ou pessoa autorizada a recebê-lo, NÃO PODE usar, copiar, transmitir, retransmitir
+ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.\n
+A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
+🤖 Robot 1milhão Invest
 """.strip()
 
                     msg_html = f"""
@@ -150,9 +157,17 @@ while True:
     <p><b>Ticker:</b> {ticker_symbol_sem_ext}</p>
     <p><b>Preço alvo:</b> R$ {preco_alvo:.2f}</p>
     <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>
-    <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}" style="color:#60a5fa;">Ver gráfico</a></p>
+    <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}" style="color:#60a5fa;">Ver gráfico no TradingView</a></p>
     <hr style="border:1px solid #3b82f6; margin:20px 0;">
-    <p style="font-size:11px; color:#9ca3af;">Mensagem de alerta automática do robô CURTO.</p>
+    <p style="font-size:11px; line-height:1.5; color:#9ca3af;">
+      <b>COMPLIANCE:</b> Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.<br>
+      A compra ou venda é de total decisão e responsabilidade do Destinatário.<br>
+      Esta informação é <b>CONFIDENCIAL</b>, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.<br>
+      Se você <b>NÃO</b> for DESTINATÁRIO ou pessoa autorizada a recebê-lo, <b>NÃO PODE</b> usar, copiar, transmitir, retransmitir
+      ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.<br>
+      A Lista de Ações do 1milhao Invest é devidamente <b>REGISTRADA.</b>
+    </p>
+    <p style="margin-top:10px;">🤖 Robot 1milhão Invest</p>
   </body>
 </html>
 """.strip()
