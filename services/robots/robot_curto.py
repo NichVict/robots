@@ -6,16 +6,15 @@ from zoneinfo import ZoneInfo
 from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
-# ==================================================
-# 🧾 AJUSTE DE LOGS PARA O RENDER
-# ==================================================
 import sys
 import logging
 import builtins
 
 # Garante que prints apareçam em tempo real no Render
 
+
 print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
+
 
 
 # Força o logging a usar stdout (Render exibe stdout)
