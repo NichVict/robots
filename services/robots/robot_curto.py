@@ -11,9 +11,12 @@ from core.notifications import enviar_alerta
 # ==================================================
 import sys
 import logging
+import builtins
 
 # Garante que prints apareçam em tempo real no Render
-print = lambda *args, **kwargs: __builtins__.print(*args, **kwargs, flush=True)
+
+print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
+
 
 # Força o logging a usar stdout (Render exibe stdout)
 logging.basicConfig(
