@@ -83,12 +83,28 @@ log("=" * 60, "—")
 # ==================================================
 # 🔁 LOOP PRINCIPAL
 # ==================================================
+# ==================================================
+# 🔁 LOOP PRINCIPAL
+# ==================================================
 while True:
     now = agora_lx()
 
+    # 🔄 Recarrega estado do Supabase a cada ciclo
+    try:
+        estado_atualizado = carregar_estado_duravel("curto")
+        if estado_atualizado and isinstance(estado_atualizado, dict):
+            estado.update(estado_atualizado)
+            log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
+        else:
+            log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
+    except Exception as e:
+        log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
+
+    # 🕓 Segue o fluxo normal do pregão
     if dentro_pregao(now):
         data_hoje = str(now.date())
         ultima = str(estado.get("ultima_data_abertura_enviada", ""))
+
 
         # 🔒 Envia mensagem de abertura 1x por dia
         if ultima != data_hoje:
