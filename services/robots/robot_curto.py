@@ -70,8 +70,19 @@ def formatar_duracao(segundos):
 print("🤖 Robô CURTO iniciado.")
 estado = carregar_estado_duravel("curto")
 
+# Se o Supabase não respondeu, aguarda e tenta novamente em loop
+if not estado:
+    print("⚠️ Falha ao carregar estado remoto — aguardando conexão...")
+    while not estado:
+        time.sleep(60)
+        estado = carregar_estado_duravel("curto")
+        if estado:
+            print("✅ Estado remoto recuperado com sucesso.")
+
+# Segurança extra
 if not isinstance(estado, dict):
     estado = {}
+
 
 estado.setdefault("ativos", [])
 estado.setdefault("tempo_acumulado", {})
