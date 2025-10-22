@@ -20,9 +20,9 @@ print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 # ==================================================
 TZ = ZoneInfo("Europe/Lisbon")
 HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
-HORARIO_FIM_PREGAO = datetime.time(23, 0, 0)
+HORARIO_FIM_PREGAO = datetime.time(23, 59, 0)
 INTERVALO_VERIFICACAO = 300       # 5 minutos
-TEMPO_ACUMULADO_MAXIMO = 1500     # 25 minutos
+TEMPO_ACUMULADO_MAXIMO = 1200     # 25 minutos
 
 # ==================================================
 # 🕒 FUNÇÕES DE TEMPO
@@ -89,22 +89,43 @@ log("=" * 60, "—")
 while True:
     now = agora_lx()
 
-    # 🔄 Recarrega estado do Supabase a cada ciclo
+    # ==================================================
+    # 🔄 RECARREGAR ESTADO DO SUPABASE (regra 1)
+    # ==================================================
     try:
         estado_atualizado = carregar_estado_duravel("curto")
         if estado_atualizado and isinstance(estado_atualizado, dict):
-            estado.update(estado_atualizado)
+            # Atualiza de forma inteligente
+            for chave, valor in estado_atualizado.items():
+                # substitui listas (como "ativos") pelo conteúdo real do Supabase
+                if isinstance(valor, list):
+                    estado[chave] = valor
+                # mescla dicionários mantendo dados locais de contagem
+                elif isinstance(valor, dict):
+                    for sub_k, sub_v in valor.items():
+                        if (
+                            chave == "tempo_acumulado"
+                            and sub_k in estado["em_contagem"]
+                            and estado["em_contagem"].get(sub_k)
+                        ):
+                            # 🔒 regra 2 — não zera contagem de ativos em andamento
+                            continue
+                        estado[chave][sub_k] = sub_v
+                else:
+                    estado[chave] = valor
+
             log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
         else:
-            log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
+            log("Aviso: resposta inválida ao tentar recarregar estado do Supabase.", "⚠️")
     except Exception as e:
         log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
 
-    # 🕓 Segue o fluxo normal do pregão
+    # ==================================================
+    # 🕓 FLUXO NORMAL — DURANTE O PREGÃO
+    # ==================================================
     if dentro_pregao(now):
         data_hoje = str(now.date())
         ultima = str(estado.get("ultima_data_abertura_enviada", ""))
-
 
         # 🔒 Envia mensagem de abertura 1x por dia
         if ultima != data_hoje:
@@ -157,7 +178,7 @@ while True:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
                     log(f"{ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.", "⌛")
 
-                # 🚀 Disparo do alerta
+                # 🚀 Disparo do alerta — Regra 4b
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
                     estado["status"][ticker] = "🚀 Disparado"
 
@@ -203,14 +224,6 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
 
                     enviar_alerta("curto", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
 
-                    estado["historico_alertas"].append({
-                        "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
-                        "ticker": ticker,
-                        "operacao": operacao,
-                        "preco_alvo": preco_alvo,
-                        "preco_atual": preco_atual
-                    })
-
                     tickers_para_remover.append(ticker)
                     estado["em_contagem"][ticker] = False
                     estado["tempo_acumulado"][ticker] = 0
@@ -222,9 +235,9 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
                     estado["tempo_acumulado"][ticker] = 0
                     estado["status"][ticker] = "🔴 Fora da zona"
 
-        # -----------------------------
-        # 🧹 LIMPEZA PÓS-ATIVAÇÃO
-        # -----------------------------
+        # ==================================================
+        # 🧹 LIMPEZA PÓS-ATIVAÇÃO — Regra 4b
+        # ==================================================
         if tickers_para_remover:
             estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in tickers_para_remover]
             for t in tickers_para_remover:
@@ -243,9 +256,17 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
         time.sleep(INTERVALO_VERIFICACAO)
 
     # ==================================================
-    # 🕓 Fora do horário de pregão
+    # 🕓 FORA DO PREGÃO — Regra 3
     # ==================================================
     else:
+        # Reinicia contagens no dia seguinte
+        for tk in list(estado["tempo_acumulado"].keys()):
+            if estado["em_contagem"].get(tk, False):
+                estado["tempo_acumulado"][tk] = 0
+                estado["em_contagem"][tk] = False
+                log(f"Contagem de {tk} reiniciada (pregão fechado).", "🔁")
+        salvar_estado_duravel("curto", estado)
+
         faltam, prox = segundos_ate_abertura(now)
         log(f"Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).", "🟥")
         time.sleep(min(faltam, 3600))
