@@ -92,31 +92,48 @@ while True:
     # ==================================================
     # 🔄 RECARREGAR ESTADO DO SUPABASE (regra 1)
     # ==================================================
+    # 🔄 Recarrega estado do Supabase a cada ciclo (com merge seguro)
     try:
-        estado_atualizado = carregar_estado_duravel("curto")
-        if estado_atualizado and isinstance(estado_atualizado, dict):
-            # Atualiza de forma inteligente
-            for chave, valor in estado_atualizado.items():
-                # substitui listas (como "ativos") pelo conteúdo real do Supabase
-                if isinstance(valor, list):
-                    estado[chave] = valor
-                # mescla dicionários mantendo dados locais de contagem
-                elif isinstance(valor, dict):
-                    for sub_k, sub_v in valor.items():
-                        if (
-                            chave == "tempo_acumulado"
-                            and sub_k in estado["em_contagem"]
-                            and estado["em_contagem"].get(sub_k)
-                        ):
-                            # 🔒 regra 2 — não zera contagem de ativos em andamento
-                            continue
-                        estado[chave][sub_k] = sub_v
-                else:
-                    estado[chave] = valor
+        estado_remoto = carregar_estado_duravel("curto")
+
+        if estado_remoto and isinstance(estado_remoto, dict):
+            ativos_remotos = estado_remoto.get("ativos", [])
+            tickers_remotos = {a["ticker"] for a in ativos_remotos}
+            tickers_locais = {a["ticker"] for a in estado.get("ativos", [])}
+
+            novos = tickers_remotos - tickers_locais
+            removidos = tickers_locais - tickers_remotos
+
+            # Adiciona novos ativos
+            for ativo in ativos_remotos:
+                if ativo["ticker"] in novos:
+                    estado["ativos"].append(ativo)
+                    log(f"🆕 Novo ativo detectado: {ativo['ticker']}", "🔁")
+
+            # Remove os que saíram do Supabase
+            if removidos:
+                estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in removidos]
+                for t in removidos:
+                    estado["tempo_acumulado"].pop(t, None)
+                    estado["em_contagem"].pop(t, None)
+                    estado["status"].pop(t, None)
+                    log(f"🗑️ Ativo removido da base: {t}", "⚠️")
+
+            # Mantém e preserva tempo acumulado e status existentes
+            for ativo in estado["ativos"]:
+                tk = ativo["ticker"]
+                if tk not in estado["tempo_acumulado"]:
+                    estado["tempo_acumulado"][tk] = 0
+                if tk not in estado["em_contagem"]:
+                    estado["em_contagem"][tk] = False
+                if tk not in estado["status"]:
+                    estado["status"][tk] = "🟢 Aguardando condição"
 
             log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
+
         else:
             log("Aviso: resposta inválida ao tentar recarregar estado do Supabase.", "⚠️")
+
     except Exception as e:
         log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
 
