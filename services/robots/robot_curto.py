@@ -6,13 +6,13 @@ from zoneinfo import ZoneInfo
 from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
-from core.logger import log  # ✅ Novo logger limpo
+from core.logger import log  # ✅ Logger limpo
 import sys
 import logging
 import builtins
 
 # ==================================================
-# 💬 Logging em tempo real (Render-friendly)
+# 💬 LOGGING EM TEMPO REAL (Render-friendly)
 # ==================================================
 print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 
@@ -35,6 +35,33 @@ HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
 HORARIO_FIM_PREGAO = datetime.time(21, 0, 0)
 INTERVALO_VERIFICACAO = 300       # 5 minutos
 TEMPO_ACUMULADO_MAXIMO = 1500     # 25 minutos
+
+# ==================================================
+# 🕒 FUNÇÕES DE TEMPO
+# ==================================================
+def agora_lx():
+    return datetime.datetime.now(TZ)
+
+
+def dentro_pregao(dt):
+    t = dt.time()
+    return HORARIO_INICIO_PREGAO <= t <= HORARIO_FIM_PREGAO
+
+
+def segundos_ate_abertura(dt):
+    abre = dt.replace(hour=HORARIO_INICIO_PREGAO.hour, minute=0, second=0, microsecond=0)
+    fecha = dt.replace(hour=HORARIO_FIM_PREGAO.hour, minute=0, second=0, microsecond=0)
+    if dt < abre:
+        return int((abre - dt).total_seconds()), abre
+    elif dt > fecha:
+        prox = abre + datetime.timedelta(days=1)
+        return int((prox - dt).total_seconds()), prox
+    else:
+        return 0, abre
+
+
+def formatar_duracao(segundos):
+    return str(datetime.timedelta(seconds=int(segundos)))
 
 # ==================================================
 # 🚀 INICIALIZAÇÃO
@@ -62,7 +89,8 @@ estado.setdefault("ultima_data_abertura_enviada", None)
 
 log(f"{len(estado['ativos'])} ativos carregados.", "📦")
 log("=" * 60, "—")
- ==================================================
+
+# ==================================================
 # 🔁 LOOP PRINCIPAL
 # ==================================================
 while True:
@@ -78,13 +106,13 @@ while True:
                 "curto",
                 "📣 Pregão Aberto",
                 "<b>O pregão foi iniciado! 🟢</b><br><i>O robô de curto prazo está monitorando os ativos.</i>",
-                "🤖 Robô iniciando monitoramento — Pregão Aberto!"
+                "🤖 Robô CURTO iniciando monitoramento — Pregão Aberto!"
             )
             estado["ultima_data_abertura_enviada"] = data_hoje
             salvar_estado_duravel("curto", estado)
-            print(f"[{now.strftime('%H:%M:%S')}] 📣 Mensagem de abertura enviada ({data_hoje}).\n")
+            log(f"Mensagem de abertura enviada ({data_hoje}).", "📣")
 
-        print(f"[{now.strftime('%H:%M:%S')}] 🟢 Monitorando {len(estado['ativos'])} ativos...")
+        log(f"Monitorando {len(estado['ativos'])} ativos...", "🟢")
 
         tickers_para_remover = []
 
@@ -97,11 +125,11 @@ while True:
             try:
                 preco_atual = obter_preco_atual(tk_full)
             except Exception as e:
-                print(f"⚠️ Erro ao obter preço de {ticker}: {e}")
+                log(f"Erro ao obter preço de {ticker}: {e}", "⚠️")
                 continue
 
             if not preco_atual or preco_atual <= 0:
-                print(f"⚠️ Preço inválido para {ticker}. Pulando...")
+                log(f"Preço inválido para {ticker}. Pulando...", "⚠️")
                 continue
 
             condicao = (
@@ -118,10 +146,10 @@ while True:
                 if not estado["em_contagem"].get(ticker, False):
                     estado["em_contagem"][ticker] = True
                     estado["tempo_acumulado"][ticker] = 0
-                    print(f"⚠️ {ticker} atingiu o alvo ({preco_alvo:.2f}). Iniciando contagem...")
+                    log(f"{ticker} atingiu o alvo ({preco_alvo:.2f}). Iniciando contagem...", "⚠️")
                 else:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
-                    print(f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.")
+                    log(f"{ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.", "⌛")
 
                 # 🚀 Disparo do alerta
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
@@ -183,7 +211,7 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
 
             else:
                 if estado["em_contagem"].get(ticker, False):
-                    print(f"❌ {ticker} saiu da zona de preço.")
+                    log(f"{ticker} saiu da zona de preço.", "❌")
                     estado["em_contagem"][ticker] = False
                     estado["tempo_acumulado"][ticker] = 0
                     estado["status"][ticker] = "🔴 Fora da zona"
@@ -197,24 +225,18 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
                 estado["tempo_acumulado"].pop(t, None)
                 estado["em_contagem"].pop(t, None)
                 estado["status"][t] = "✅ Ativado (removido)"
-                # 🔥 Limpeza seletiva no Supabase
                 try:
                     apagar_estado_duravel("curto", apenas_ticker=t)
-                    print(f"🗑️ Registro de {t} removido do Supabase (curto).")
+                    log(f"Registro de {t} removido do Supabase.", "🗑️")
                 except Exception as e:
-                    print(f"⚠️ Erro ao limpar {t} no Supabase: {e}")
-            print(f"🧹 Removidos após ativação: {', '.join(tickers_para_remover)}")
+                    log(f"Erro ao limpar {t} no Supabase: {e}", "⚠️")
+            log(f"Removidos após ativação: {', '.join(tickers_para_remover)}", "🧹")
 
         salvar_estado_duravel("curto", estado)
-        print("💾 Estado salvo.\n")
+        log("Estado salvo.", "💾")
         time.sleep(INTERVALO_VERIFICACAO)
 
     else:
         faltam, prox = segundos_ate_abertura(now)
-        print(f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).")
+        log(f"Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).", "🟥")
         time.sleep(min(faltam, 3600))
-
-
-
-
-
