@@ -66,7 +66,7 @@ if not estado:
             log("Estado remoto recuperado com sucesso.", "✅")
 else:
     log("Estado carregado com sucesso.", "✅")
-    
+
 if not isinstance(estado, dict):
     estado = {}
 
@@ -232,7 +232,4 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
         time.sleep(min(faltam, 3600))
 
 
-    else:
-        faltam, prox = segundos_ate_abertura(now)
-        log(f"Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).", "🟥")
-        time.sleep(min(faltam, 3600))
+
