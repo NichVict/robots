@@ -6,18 +6,16 @@ from zoneinfo import ZoneInfo
 from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
+from core.logger import log  # ✅ Novo logger limpo
 import sys
 import logging
 import builtins
 
-# Garante que prints apareçam em tempo real no Render
-
-
+# ==================================================
+# 💬 Logging em tempo real (Render-friendly)
+# ==================================================
 print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 
-
-
-# Força o logging a usar stdout (Render exibe stdout)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -25,11 +23,9 @@ logging.basicConfig(
     force=True
 )
 
-# Silencia logs chatos de bibliotecas HTTP
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests").setLevel(logging.WARNING)
-
 
 # ==================================================
 # ⚙️ CONFIGURAÇÕES
@@ -41,48 +37,21 @@ INTERVALO_VERIFICACAO = 300       # 5 minutos
 TEMPO_ACUMULADO_MAXIMO = 1500     # 25 minutos
 
 # ==================================================
-# 🕒 FUNÇÕES DE TEMPO
-# ==================================================
-def agora_lx():
-    return datetime.datetime.now(TZ)
-
-def dentro_pregao(dt):
-    t = dt.time()
-    return HORARIO_INICIO_PREGAO <= t <= HORARIO_FIM_PREGAO
-
-def segundos_ate_abertura(dt):
-    abre = dt.replace(hour=HORARIO_INICIO_PREGAO.hour, minute=0, second=0, microsecond=0)
-    fecha = dt.replace(hour=HORARIO_FIM_PREGAO.hour, minute=0, second=0, microsecond=0)
-    if dt < abre:
-        return int((abre - dt).total_seconds()), abre
-    elif dt > fecha:
-        prox = abre + datetime.timedelta(days=1)
-        return int((prox - dt).total_seconds()), prox
-    else:
-        return 0, abre
-
-def formatar_duracao(segundos):
-    return str(datetime.timedelta(seconds=int(segundos)))
-
-# ==================================================
 # 🚀 INICIALIZAÇÃO
 # ==================================================
-print("🤖 Robô CURTO iniciado.")
+log("Robô CURTO iniciado.", "🤖")
 estado = carregar_estado_duravel("curto")
 
-# Se o Supabase não respondeu, aguarda e tenta novamente em loop
 if not estado:
-    print("⚠️ Falha ao carregar estado remoto — aguardando conexão...")
+    log("Falha ao carregar estado remoto — aguardando reconexão...", "⚠️")
     while not estado:
         time.sleep(60)
         estado = carregar_estado_duravel("curto")
         if estado:
-            print("✅ Estado remoto recuperado com sucesso.")
+            log("Estado remoto recuperado com sucesso.", "✅")
 
-# Segurança extra
 if not isinstance(estado, dict):
     estado = {}
-
 
 estado.setdefault("ativos", [])
 estado.setdefault("tempo_acumulado", {})
@@ -91,18 +60,9 @@ estado.setdefault("status", {})
 estado.setdefault("historico_alertas", [])
 estado.setdefault("ultima_data_abertura_enviada", None)
 
-try:
-    if isinstance(estado["ultima_data_abertura_enviada"], datetime.date):
-        estado["ultima_data_abertura_enviada"] = estado["ultima_data_abertura_enviada"].isoformat()
-    elif not isinstance(estado["ultima_data_abertura_enviada"], str):
-        estado["ultima_data_abertura_enviada"] = None
-except Exception:
-    estado["ultima_data_abertura_enviada"] = None
-
-print(f"📦 {len(estado['ativos'])} ativos carregados.")
-print("=" * 60)
-
-# ==================================================
+log(f"{len(estado['ativos'])} ativos carregados.", "📦")
+log("=" * 60, "—")
+ ==================================================
 # 🔁 LOOP PRINCIPAL
 # ==================================================
 while True:
