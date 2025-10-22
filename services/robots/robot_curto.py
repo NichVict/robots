@@ -226,10 +226,14 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
         log("Estado salvo.", "💾")
         time.sleep(INTERVALO_VERIFICACAO)
 
+    # ==================================================
+    # 🕓 Fora do horário de pregão
+    # ==================================================
     else:
         faltam, prox = segundos_ate_abertura(now)
         log(f"Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).", "🟥")
         time.sleep(min(faltam, 3600))
+
 
 
 
