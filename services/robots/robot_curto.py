@@ -64,7 +64,9 @@ if not estado:
         estado = carregar_estado_duravel("curto")
         if estado:
             log("Estado remoto recuperado com sucesso.", "✅")
-
+else:
+    log("Estado carregado com sucesso.", "✅")
+    
 if not isinstance(estado, dict):
     estado = {}
 
