@@ -6,26 +6,14 @@ from zoneinfo import ZoneInfo
 from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
-from core.logger import log  # ✅ Logger limpo
-import sys
-import logging
+from core.logger import log  # ✅ Logger centralizado
 import builtins
 
 # ==================================================
 # 💬 LOGGING EM TEMPO REAL (Render-friendly)
 # ==================================================
+# Substitui o print padrão por versão com flush imediato
 print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    stream=sys.stdout,
-    force=True
-)
-
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("requests").setLevel(logging.WARNING)
 
 # ==================================================
 # ⚙️ CONFIGURAÇÕES
@@ -235,6 +223,12 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
         salvar_estado_duravel("curto", estado)
         log("Estado salvo.", "💾")
         time.sleep(INTERVALO_VERIFICACAO)
+
+    else:
+        faltam, prox = segundos_ate_abertura(now)
+        log(f"Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).", "🟥")
+        time.sleep(min(faltam, 3600))
+
 
     else:
         faltam, prox = segundos_ate_abertura(now)
