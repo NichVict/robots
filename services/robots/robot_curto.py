@@ -35,7 +35,7 @@ logging.getLogger("requests").setLevel(logging.WARNING)
 # ⚙️ CONFIGURAÇÕES
 # ==================================================
 TZ = ZoneInfo("Europe/Lisbon")
-HORARIO_INICIO_PREGAO = datetime.time(14, 0, 0)
+HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
 HORARIO_FIM_PREGAO = datetime.time(21, 0, 0)
 INTERVALO_VERIFICACAO = 300       # 5 minutos
 TEMPO_ACUMULADO_MAXIMO = 1500     # 25 minutos
