@@ -21,8 +21,8 @@ print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 TZ = ZoneInfo("Europe/Lisbon")
 HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
 HORARIO_FIM_PREGAO = datetime.time(23, 59, 0)
-INTERVALO_VERIFICACAO = 120       # 1 minuto (teste)
-TEMPO_ACUMULADO_MAXIMO = 600     # 25 minutos
+INTERVALO_VERIFICACAO = 60       # 1 minuto
+TEMPO_ACUMULADO_MAXIMO = 300     # 5 minutos
 
 # ==================================================
 # 🕒 FUNÇÕES DE TEMPO
@@ -50,6 +50,7 @@ def segundos_ate_abertura(dt):
 
 def formatar_duracao(segundos):
     return str(datetime.timedelta(seconds=int(segundos)))
+
 
 # ==================================================
 # 🚀 INICIALIZAÇÃO
@@ -154,15 +155,22 @@ while True:
                 "🤖 Robô CURTO iniciando monitoramento — Pregão Aberto!"
             )
             estado["ultima_data_abertura_enviada"] = data_hoje
+
+            # 🧹 ZERA contagens do dia anterior
+            log("🧹 Limpando contagens do dia anterior (novo pregão iniciado)...", "🔁")
+            estado["tempo_acumulado"].clear()
+            estado["em_contagem"].clear()
+            estado["status"].clear()
+
             salvar_estado_duravel("curto", estado)
-            log(f"Mensagem de abertura enviada ({data_hoje}).", "📣")
+            log("Contagens zeradas com sucesso para o novo pregão.", "✅")
 
         log(f"Monitorando {len(estado['ativos'])} ativos...", "🟢")
 
         # ==================================================
         # 🔍 Verificação de cada ativo
         # ==================================================
-        for ativo in list(estado["ativos"]):
+        for ativo in estado["ativos"]:
             ticker = ativo["ticker"]
             preco_alvo = ativo["preco"]
             operacao = ativo["operacao"]
@@ -197,8 +205,14 @@ while True:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
                     log(f"{ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.", "⌛")
 
-                # 🚀 Disparo do alerta — Regra 4b
+                # ==================================================
+                # 🚀 Disparo do alerta — com bloqueio anti-duplicação
+                # ==================================================
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
+                    if estado["status"].get(ticker) in ["🚀 Disparado", "✅ Removendo...", "✅ Ativado (removido)"]:
+                        log(f"{ticker} já foi disparado ou está sendo removido. Ignorando duplicação.", "⏸️")
+                        continue
+
                     estado["status"][ticker] = "🚀 Disparado"
 
                     msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
@@ -251,38 +265,30 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
                         "preco_atual": preco_atual
                     })
 
+                    estado["status"][ticker] = "✅ Removendo..."
+                    salvar_estado_duravel("curto", estado)
+                    log(f"{ticker} marcado como 'Removendo...' e salvo na nuvem.", "🗂️")
+
+                    try:
+                        apagar_estado_duravel("curto", apenas_ticker=ticker)
+                        log(f"Registro de {ticker} removido do Supabase.", "🗑️")
+                    except Exception as e:
+                        log(f"Erro ao limpar {ticker} no Supabase: {e}", "⚠️")
+
                     estado["ativos"] = [a for a in estado["ativos"] if a.get("ticker") != ticker]
                     estado["tempo_acumulado"].pop(ticker, None)
                     estado["em_contagem"].pop(ticker, None)
                     estado["status"][ticker] = "✅ Ativado (removido)"
 
                     salvar_estado_duravel("curto", estado)
-                    log(f"{ticker} removido do estado e salvo na nuvem.", "🗂️")
+                    log(f"{ticker} removido completamente e persistido.", "💾")
 
-                    try:
-                        apagar_estado_duravel("curto", apenas_ticker=ticker)
-                        log(f"Registro de {ticker} removido do Supabase.", "🗑️")
-                    except TypeError:
-                        log(f"Função apagar_estado_duravel() não suporta apenas_ticker — ignorado.", "⚠️")
-                    except Exception as e:
-                        log(f"Erro ao limpar {ticker} no Supabase: {e}", "⚠️")
-
-                    continue  # vai para o próximo ativo
+                    continue  # próximo ativo
 
         # --------------------------------------------------
-        # 🧹 SALVAR ESTADO GERAL
+        # 🧹 SALVAR ESTADO GERAL E ESPERAR PRÓXIMO CICLO
         # --------------------------------------------------
         salvar_estado_duravel("curto", estado)
         log("Estado salvo.", "💾")
+        time.sleep(INTERVALO_VERIFICACAO)
 
-    # ==================================================
-    # 🕓 Fora do horário de pregão
-    # ==================================================
-    else:
-        faltam, prox = segundos_ate_abertura(now)
-        log(f"Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).", "🟥")
-
-    # ==================================================
-    # 💤 ESPERA PELO PRÓXIMO CICLO
-    # ==================================================
-    time.sleep(INTERVALO_VERIFICACAO)
