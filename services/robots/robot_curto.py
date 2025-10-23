@@ -178,13 +178,22 @@ while True:
 
             try:
                 preco_atual = obter_preco_atual(tk_full)
+                # 🧩 Proteção: evita strings, None, etc.
+                if isinstance(preco_atual, dict):
+                    preco_atual = preco_atual.get("preco") or preco_atual.get("last") or preco_atual.get("price")
+
+                if not isinstance(preco_atual, (int, float)):
+                    log(f"Retorno inesperado ao obter preço de {ticker}: {type(preco_atual).__name__}. Pulando...", "⚠️")
+                    continue
+
             except Exception as e:
                 log(f"Erro ao obter preço de {ticker}: {e}", "⚠️")
                 continue
 
-            if not preco_atual or preco_atual <= 0:
+            if preco_atual <= 0:
                 log(f"Preço inválido para {ticker}. Pulando...", "⚠️")
                 continue
+
 
             condicao = (
                 (operacao == "compra" and preco_atual >= preco_alvo)
