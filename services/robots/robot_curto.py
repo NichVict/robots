@@ -194,9 +194,31 @@ while True:
                 # 🚀 Disparo do alerta — com bloqueio anti-duplicação
                 # ==================================================
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
-                if estado["status"].get(ticker, "").startswith("✅ Ativado"):
-                    log(f"{ticker} já foi ativado anteriormente — ignorando reentrada.", "⏸️")
-                    continue
+                    if estado["status"].get(ticker) in ["🚀 Disparado", "✅ Removendo...", "✅ Ativado (removido)"]:
+                        log(f"{ticker} já foi disparado ou está sendo removido. Ignorando duplicação.", "⏸️")
+                        continue
+
+                    # ==================================================
+                    # 🔒 BLOQUEIO TRANSACIONAL (anti-duplicação entre instâncias)
+                    # ==================================================
+                    try:
+                        estado_remoto = carregar_estado_duravel("curto")
+                        status_remoto = estado_remoto.get("status", {}).get(ticker, "")
+
+                        if "🚀" in status_remoto or "Removido" in status_remoto or "Removendo" in status_remoto:
+                            log(f"⏸️ {ticker} já foi disparado por outra instância. Abortando duplicação.", "⚠️")
+                            continue
+
+                        # Marca imediatamente como 'Disparando...' no Supabase
+                        estado["status"][ticker] = "🚀 Disparando..."
+                        salvar_estado_duravel("curto", estado)
+                        log(f"🔒 {ticker} bloqueado como 'Disparando...' (transação aberta).", "🔐")
+
+                    except Exception as e:
+                        log(f"⚠️ Falha no bloqueio transacional de {ticker}: {e}", "⚠️")
+
+
+
 
                     estado["status"][ticker] = "🚀 Disparado"
 
