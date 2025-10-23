@@ -21,8 +21,8 @@ print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 TZ = ZoneInfo("Europe/Lisbon")
 HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
 HORARIO_FIM_PREGAO = datetime.time(23, 59, 0)
-INTERVALO_VERIFICACAO = 60       # 1 minuto
-TEMPO_ACUMULADO_MAXIMO = 300     # 5 minutos
+INTERVALO_VERIFICACAO = 180      # 1 minuto
+TEMPO_ACUMULADO_MAXIMO = 480     # 5 minutos
 
 # ==================================================
 # 🕒 FUNÇÕES DE TEMPO
