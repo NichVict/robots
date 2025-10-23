@@ -21,8 +21,8 @@ print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 TZ = ZoneInfo("Europe/Lisbon")
 HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
 HORARIO_FIM_PREGAO = datetime.time(23, 59, 0)
-INTERVALO_VERIFICACAO = 300       # 5 minutos
-TEMPO_ACUMULADO_MAXIMO = 1200     # 25 minutos
+INTERVALO_VERIFICACAO = 120       # 1 minuto (teste)
+TEMPO_ACUMULADO_MAXIMO = 600     # 25 minutos
 
 # ==================================================
 # 🕒 FUNÇÕES DE TEMPO
@@ -80,9 +80,7 @@ estado.setdefault("ultima_data_abertura_enviada", None)
 log(f"{len(estado['ativos'])} ativos carregados.", "📦")
 log("=" * 60, "—")
 
-# ==================================================
-# 🔁 LOOP PRINCIPAL
-# ==================================================
+
 # ==================================================
 # 🔁 LOOP PRINCIPAL
 # ==================================================
@@ -92,50 +90,53 @@ while True:
     # ==================================================
     # 🔄 RECARREGAR ESTADO DO SUPABASE (regra 1)
     # ==================================================
-    # 🔄 Recarrega estado do Supabase a cada ciclo (com merge seguro)
     try:
-        estado_remoto = carregar_estado_duravel("curto")
+        remoto = carregar_estado_duravel("curto")
+        if isinstance(remoto, dict):
+            # 1) substitui o conjunto de ativos pelo remoto
+            estado_remoto_ativos = remoto.get("ativos", [])
+            estado["ativos"] = estado_remoto_ativos
 
-        if estado_remoto and isinstance(estado_remoto, dict):
-            ativos_remotos = estado_remoto.get("ativos", [])
-            tickers_remotos = {a["ticker"] for a in ativos_remotos}
-            tickers_locais = {a["ticker"] for a in estado.get("ativos", [])}
+            # 2) prepara dicionários
+            estado.setdefault("tempo_acumulado", {})
+            estado.setdefault("em_contagem", {})
+            estado.setdefault("status", {})
+            remoto.setdefault("tempo_acumulado", {})
+            remoto.setdefault("em_contagem", {})
+            remoto.setdefault("status", {})
 
-            novos = tickers_remotos - tickers_locais
-            removidos = tickers_locais - tickers_remotos
+            # 3) mantém dados apenas dos tickers atuais
+            atuais = {a["ticker"] for a in estado_remoto_ativos if "ticker" in a}
+            novo_tempo = {}
+            novo_contagem = {}
+            novo_status = {}
 
-            # Adiciona novos ativos
-            for ativo in ativos_remotos:
-                if ativo["ticker"] in novos:
-                    estado["ativos"].append(ativo)
-                    log(f"🆕 Novo ativo detectado: {ativo['ticker']}", "🔁")
+            for t in atuais:
+                if t in estado["tempo_acumulado"]:
+                    novo_tempo[t] = estado["tempo_acumulado"][t]
+                elif t in remoto["tempo_acumulado"]:
+                    novo_tempo[t] = remoto["tempo_acumulado"][t]
 
-            # Remove os que saíram do Supabase
-            if removidos:
-                estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in removidos]
-                for t in removidos:
-                    estado["tempo_acumulado"].pop(t, None)
-                    estado["em_contagem"].pop(t, None)
-                    estado["status"].pop(t, None)
-                    log(f"🗑️ Ativo removido da base: {t}", "⚠️")
+                if t in estado["em_contagem"]:
+                    novo_contagem[t] = estado["em_contagem"][t]
+                elif t in remoto["em_contagem"]:
+                    novo_contagem[t] = remoto["em_contagem"][t]
 
-            # Mantém e preserva tempo acumulado e status existentes
-            for ativo in estado["ativos"]:
-                tk = ativo["ticker"]
-                if tk not in estado["tempo_acumulado"]:
-                    estado["tempo_acumulado"][tk] = 0
-                if tk not in estado["em_contagem"]:
-                    estado["em_contagem"][tk] = False
-                if tk not in estado["status"]:
-                    estado["status"][tk] = "🟢 Aguardando condição"
+                if t in estado["status"]:
+                    novo_status[t] = estado["status"][t]
+                elif t in remoto["status"]:
+                    novo_status[t] = remoto["status"][t]
+
+            estado["tempo_acumulado"] = novo_tempo
+            estado["em_contagem"] = novo_contagem
+            estado["status"] = novo_status
 
             log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
-
         else:
-            log("Aviso: resposta inválida ao tentar recarregar estado do Supabase.", "⚠️")
-
+            log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
     except Exception as e:
         log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
+
 
     # ==================================================
     # 🕓 FLUXO NORMAL — DURANTE O PREGÃO
@@ -158,9 +159,10 @@ while True:
 
         log(f"Monitorando {len(estado['ativos'])} ativos...", "🟢")
 
-        tickers_para_remover = []
-
-        for ativo in estado["ativos"]:
+        # ==================================================
+        # 🔍 Verificação de cada ativo
+        # ==================================================
+        for ativo in list(estado["ativos"]):
             ticker = ativo["ticker"]
             preco_alvo = ativo["preco"]
             operacao = ativo["operacao"]
@@ -241,53 +243,46 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
 
                     enviar_alerta("curto", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
 
-                    tickers_para_remover.append(ticker)
-                    estado["em_contagem"][ticker] = False
-                    estado["tempo_acumulado"][ticker] = 0
+                    estado["historico_alertas"].append({
+                        "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "ticker": ticker,
+                        "operacao": operacao,
+                        "preco_alvo": preco_alvo,
+                        "preco_atual": preco_atual
+                    })
 
-            else:
-                if estado["em_contagem"].get(ticker, False):
-                    log(f"{ticker} saiu da zona de preço.", "❌")
-                    estado["em_contagem"][ticker] = False
-                    estado["tempo_acumulado"][ticker] = 0
-                    estado["status"][ticker] = "🔴 Fora da zona"
+                    estado["ativos"] = [a for a in estado["ativos"] if a.get("ticker") != ticker]
+                    estado["tempo_acumulado"].pop(ticker, None)
+                    estado["em_contagem"].pop(ticker, None)
+                    estado["status"][ticker] = "✅ Ativado (removido)"
 
-        # ==================================================
-        # 🧹 LIMPEZA PÓS-ATIVAÇÃO — Regra 4b
-        # ==================================================
-        if tickers_para_remover:
-            estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in tickers_para_remover]
-            for t in tickers_para_remover:
-                estado["tempo_acumulado"].pop(t, None)
-                estado["em_contagem"].pop(t, None)
-                estado["status"][t] = "✅ Ativado (removido)"
-                try:
-                    apagar_estado_duravel("curto", apenas_ticker=t)
-                    log(f"Registro de {t} removido do Supabase.", "🗑️")
-                except Exception as e:
-                    log(f"Erro ao limpar {t} no Supabase: {e}", "⚠️")
-            log(f"Removidos após ativação: {', '.join(tickers_para_remover)}", "🧹")
+                    salvar_estado_duravel("curto", estado)
+                    log(f"{ticker} removido do estado e salvo na nuvem.", "🗂️")
 
+                    try:
+                        apagar_estado_duravel("curto", apenas_ticker=ticker)
+                        log(f"Registro de {ticker} removido do Supabase.", "🗑️")
+                    except TypeError:
+                        log(f"Função apagar_estado_duravel() não suporta apenas_ticker — ignorado.", "⚠️")
+                    except Exception as e:
+                        log(f"Erro ao limpar {ticker} no Supabase: {e}", "⚠️")
+
+                    continue  # vai para o próximo ativo
+
+        # --------------------------------------------------
+        # 🧹 SALVAR ESTADO GERAL
+        # --------------------------------------------------
         salvar_estado_duravel("curto", estado)
         log("Estado salvo.", "💾")
-        time.sleep(INTERVALO_VERIFICACAO)
 
     # ==================================================
-    # 🕓 FORA DO PREGÃO — Regra 3
+    # 🕓 Fora do horário de pregão
     # ==================================================
     else:
-        # Reinicia contagens no dia seguinte
-        for tk in list(estado["tempo_acumulado"].keys()):
-            if estado["em_contagem"].get(tk, False):
-                estado["tempo_acumulado"][tk] = 0
-                estado["em_contagem"][tk] = False
-                log(f"Contagem de {tk} reiniciada (pregão fechado).", "🔁")
-        salvar_estado_duravel("curto", estado)
-
         faltam, prox = segundos_ate_abertura(now)
         log(f"Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')}).", "🟥")
-        time.sleep(min(faltam, 3600))
 
-
-
-
+    # ==================================================
+    # 💤 ESPERA PELO PRÓXIMO CICLO
+    # ==================================================
+    time.sleep(INTERVALO_VERIFICACAO)
