@@ -92,65 +92,26 @@ while True:
     # ==================================================
     # 🔄 RECARREGAR ESTADO DO SUPABASE (regra 1)
     # ==================================================
+        # ==================================================
+    # 🧹 LIMPEZA PREVENTIVA DE TICKERS REMOVIDOS
+    # ==================================================
     try:
-        remoto = carregar_estado_duravel("curto")
-        if isinstance(remoto, dict):
-            estado_remoto_ativos = remoto.get("ativos", [])
-
-            # 🔒 Proteção anti-race: identifica tickers já removidos localmente
-            ativos_removidos = {
-                t for t, s in estado.get("status", {}).items()
-                if "Removido" in s or "Removendo" in s
-            }
-
-            # 🔄 Atualiza lista de ativos, excluindo os já removidos
-            estado["ativos"] = [
-                a for a in estado_remoto_ativos
-                if a.get("ticker") not in ativos_removidos
-            ]
-
-            if ativos_removidos:
-                log(f"Ignorando {len(ativos_removidos)} ativo(s) removido(s): {', '.join(ativos_removidos)}", "🧹")
-
-            # 2) prepara dicionários
-            estado.setdefault("tempo_acumulado", {})
-            estado.setdefault("em_contagem", {})
-            estado.setdefault("status", {})
-            remoto.setdefault("tempo_acumulado", {})
-            remoto.setdefault("em_contagem", {})
-            remoto.setdefault("status", {})
-
-            # 3) mantém dados apenas dos tickers atuais
-            atuais = {a["ticker"] for a in estado["ativos"] if "ticker" in a}
-            novo_tempo = {}
-            novo_contagem = {}
-            novo_status = {}
-
-            for t in atuais:
-                if t in estado["tempo_acumulado"]:
-                    novo_tempo[t] = estado["tempo_acumulado"][t]
-                elif t in remoto["tempo_acumulado"]:
-                    novo_tempo[t] = remoto["tempo_acumulado"][t]
-
-                if t in estado["em_contagem"]:
-                    novo_contagem[t] = estado["em_contagem"][t]
-                elif t in remoto["em_contagem"]:
-                    novo_contagem[t] = remoto["em_contagem"][t]
-
-                if t in estado["status"]:
-                    novo_status[t] = estado["status"][t]
-                elif t in remoto["status"]:
-                    novo_status[t] = remoto["status"][t]
-
-            estado["tempo_acumulado"] = novo_tempo
-            estado["em_contagem"] = novo_contagem
-            estado["status"] = novo_status
-
-            log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
-        else:
-            log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
+        # Remove qualquer ticker marcado como "Removido" ou "Removendo"
+        tickers_para_limpar = [
+            t for t, s in estado.get("status", {}).items()
+            if isinstance(s, str) and ("Removido" in s or "Removendo" in s)
+        ]
+        if tickers_para_limpar:
+            for t in tickers_para_limpar:
+                estado["status"].pop(t, None)
+                estado["tempo_acumulado"].pop(t, None)
+                estado["em_contagem"].pop(t, None)
+            # Atualiza o Supabase com estado limpo
+            salvar_estado_duravel("curto", estado)
+            log(f"🧹 Limpou resíduos de {', '.join(tickers_para_limpar)} no início do ciclo.", "✅")
     except Exception as e:
-        log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
+        log(f"⚠️ Falha ao limpar resíduos de tickers removidos: {e}", "⚠️")
+
 
 
 
@@ -233,9 +194,9 @@ while True:
                 # 🚀 Disparo do alerta — com bloqueio anti-duplicação
                 # ==================================================
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
-                    if estado["status"].get(ticker) in ["🚀 Disparado", "✅ Removendo...", "✅ Ativado (removido)"]:
-                        log(f"{ticker} já foi disparado ou está sendo removido. Ignorando duplicação.", "⏸️")
-                        continue
+                if estado["status"].get(ticker, "").startswith("✅ Ativado"):
+                    log(f"{ticker} já foi ativado anteriormente — ignorando reentrada.", "⏸️")
+                    continue
 
                     estado["status"][ticker] = "🚀 Disparado"
 
