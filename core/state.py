@@ -39,13 +39,18 @@ DEFAULT_STATE = {
 }
 
 def _sb_and_table(nome_robo: str) -> tuple[Client, str, str]:
-    sb: Optional[Client] = SUPABASES.get(nome_robo)
+    # Garante compatibilidade tanto com "curto" quanto com "curto_przo_v1"
+    base_name = nome_robo.replace("_przo_v1", "").strip().lower()
+    
+    sb: Optional[Client] = SUPABASES.get(base_name)
     if not sb:
         raise ValueError(f"Supabase não configurado para '{nome_robo}'.")
-    tabela = TABELAS.get(nome_robo)
+    
+    tabela = TABELAS.get(base_name)
     if not tabela:
         raise ValueError(f"Tabela não definida para o robô '{nome_robo}'.")
-    chave = f"{nome_robo}_przo_v1"
+    
+    chave = f"{base_name}_przo_v1"
     return sb, tabela, chave
 
 # ==================================================
