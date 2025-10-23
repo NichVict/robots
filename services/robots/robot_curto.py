@@ -18,6 +18,7 @@ print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 # ==================================================
 # ⚙️ CONFIGURAÇÕES
 # ==================================================
+STATE_KEY = "curto_przo_v1"      # 🔒 Linha única e oficial no Supabase
 TZ = ZoneInfo("Europe/Lisbon")
 HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
 HORARIO_FIM_PREGAO = datetime.time(23, 59, 0)
@@ -55,18 +56,18 @@ def formatar_duracao(segundos):
 # ==================================================
 # 🚀 INICIALIZAÇÃO
 # ==================================================
-log("Robô CURTO iniciado.", "🤖")
-estado = carregar_estado_duravel("curto")
+log(f"Robô CURTO iniciado. (state_id={STATE_KEY})", "🤖")
+estado = carregar_estado_duravel(STATE_KEY)
 
 if not estado:
-    log("Falha ao carregar estado remoto — aguardando reconexão...", "⚠️")
+    log(f"Falha ao carregar estado remoto (state_id={STATE_KEY}) — aguardando reconexão...", "⚠️")
     while not estado:
         time.sleep(60)
-        estado = carregar_estado_duravel("curto")
+        estado = carregar_estado_duravel(STATE_KEY)
         if estado:
-            log("Estado remoto recuperado com sucesso.", "✅")
+            log(f"Estado remoto recuperado com sucesso. (state_id={STATE_KEY})", "✅")
 else:
-    log("Estado carregado com sucesso.", "✅")
+    log(f"Estado carregado com sucesso. (state_id={STATE_KEY})", "✅")
 
 if not isinstance(estado, dict):
     estado = {}
@@ -101,7 +102,7 @@ while True:
                 estado["status"].pop(t, None)
                 estado["tempo_acumulado"].pop(t, None)
                 estado["em_contagem"].pop(t, None)
-            salvar_estado_duravel("curto", estado)
+            salvar_estado_duravel(STATE_KEY, estado)
             log(f"🧹 Limpou resíduos de {', '.join(tickers_para_limpar)} no início do ciclo.", "✅")
     except Exception as e:
         log(f"⚠️ Falha ao limpar resíduos de tickers removidos: {e}", "⚠️")
@@ -110,7 +111,7 @@ while True:
     # 🔄 RECARREGAR ESTADO DO SUPABASE (regra 1)
     # ==================================================
     try:
-        remoto = carregar_estado_duravel("curto")
+        remoto = carregar_estado_duravel(STATE_KEY)
         if isinstance(remoto, dict):
             estado_remoto_ativos = remoto.get("ativos", [])
 
@@ -160,7 +161,7 @@ while True:
             estado["em_contagem"] = novo_contagem
             estado["status"] = novo_status
 
-            log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
+            log(f"Estado sincronizado com Supabase (state_id={STATE_KEY}, ativos={len(estado['ativos'])}).", "🔁")
         else:
             log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
     except Exception as e:
@@ -191,7 +192,7 @@ while True:
             estado["em_contagem"].clear()
             estado["status"].clear()
 
-            salvar_estado_duravel("curto", estado)
+            salvar_estado_duravel(STATE_KEY, estado)
             log("Contagens zeradas com sucesso para o novo pregão.", "✅")
 
         log(f"Monitorando {len(estado['ativos'])} ativos...", "🟢")
@@ -254,7 +255,7 @@ while True:
                     # 🔒 BLOQUEIO TRANSACIONAL (anti-duplicação entre instâncias)
                     # ==================================================
                     try:
-                        estado_remoto = carregar_estado_duravel("curto")
+                        estado_remoto = carregar_estado_duravel(STATE_KEY)
                         status_remoto = estado_remoto.get("status", {}).get(ticker, "")
 
                         if "🚀" in status_remoto or "Removido" in status_remoto or "Removendo" in status_remoto:
@@ -263,7 +264,7 @@ while True:
 
                         # Marca imediatamente como 'Disparando...' no Supabase
                         estado["status"][ticker] = "🚀 Disparando..."
-                        salvar_estado_duravel("curto", estado)
+                        salvar_estado_duravel(STATE_KEY, estado)
                         log(f"🔒 {ticker} bloqueado (transação ativa no Supabase — evitando duplicação).", "🔐")
 
                     except Exception as e:
@@ -338,26 +339,26 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
 
                     try:
                         # 2️⃣ Apaga primeiro no Supabase (para limpar antes do novo save)
-                        apagar_estado_duravel("curto", apenas_ticker=ticker)
-                        log(f"Registro de {ticker} removido do Supabase.", "🗑️")
+                        apagar_estado_duravel(STATE_KEY, apenas_ticker=ticker)
+                        log(f"Registro de {ticker} removido do Supabase. (state_id={STATE_KEY})", "🗑️")
                     except Exception as e:
                         log(f"Erro ao limpar {ticker} no Supabase: {e}", "⚠️")
 
                     # 3️⃣ Marca como removido e salva o estado limpo
                     estado["status"][ticker] = "✅ Ativado (removido)"
-                    salvar_estado_duravel("curto", estado)
-                    log(f"{ticker} removido completamente e persistido.", "💾")
+                    salvar_estado_duravel(STATE_KEY, estado)
+                    log(f"{ticker} removido completamente e persistido. (state_id={STATE_KEY})", "💾")
 
                     # 4️⃣ (Defensivo) remove o status do ticker e salva novamente para evitar resíduos
                     estado["status"].pop(ticker, None)
-                    salvar_estado_duravel("curto", estado)
+                    salvar_estado_duravel(STATE_KEY, estado)
 
                     continue  # próximo ativo
 
         # --------------------------------------------------
         # 🧹 SALVAR ESTADO GERAL E ESPERAR PRÓXIMO CICLO
         # --------------------------------------------------
-        salvar_estado_duravel("curto", estado)
+        salvar_estado_duravel(STATE_KEY, estado)
         log("Estado salvo.", "💾")
         time.sleep(INTERVALO_VERIFICACAO)
 
