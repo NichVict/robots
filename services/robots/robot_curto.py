@@ -88,15 +88,29 @@ log("=" * 60, "—")
 while True:
     now = agora_lx()
 
+ 
     # ==================================================
     # 🔄 RECARREGAR ESTADO DO SUPABASE (regra 1)
     # ==================================================
     try:
         remoto = carregar_estado_duravel("curto")
         if isinstance(remoto, dict):
-            # 1) substitui o conjunto de ativos pelo remoto
             estado_remoto_ativos = remoto.get("ativos", [])
-            estado["ativos"] = estado_remoto_ativos
+
+            # 🔒 Proteção anti-race: identifica tickers já removidos localmente
+            ativos_removidos = {
+                t for t, s in estado.get("status", {}).items()
+                if "Removido" in s or "Removendo" in s
+            }
+
+            # 🔄 Atualiza lista de ativos, excluindo os já removidos
+            estado["ativos"] = [
+                a for a in estado_remoto_ativos
+                if a.get("ticker") not in ativos_removidos
+            ]
+
+            if ativos_removidos:
+                log(f"Ignorando {len(ativos_removidos)} ativo(s) removido(s): {', '.join(ativos_removidos)}", "🧹")
 
             # 2) prepara dicionários
             estado.setdefault("tempo_acumulado", {})
@@ -107,7 +121,7 @@ while True:
             remoto.setdefault("status", {})
 
             # 3) mantém dados apenas dos tickers atuais
-            atuais = {a["ticker"] for a in estado_remoto_ativos if "ticker" in a}
+            atuais = {a["ticker"] for a in estado["ativos"] if "ticker" in a}
             novo_tempo = {}
             novo_contagem = {}
             novo_status = {}
@@ -137,6 +151,7 @@ while True:
             log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
     except Exception as e:
         log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
+
 
 
     # ==================================================
@@ -274,25 +289,31 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
                         "preco_atual": preco_atual
                     })
 
+                    # ==================================================
+                    # ✅ REMOÇÃO DEFINITIVA — ordem corrigida (apaga antes de salvar)
+                    # ==================================================
                     estado["status"][ticker] = "✅ Removendo..."
-                    salvar_estado_duravel("curto", estado)
-                    log(f"{ticker} marcado como 'Removendo...' e salvo na nuvem.", "🗂️")
+                    log(f"{ticker} marcado como 'Removendo...'", "🗂️")
+
+                    # 1️⃣ Remove localmente da lista e dicionários
+                    estado["ativos"] = [a for a in estado["ativos"] if a.get("ticker") != ticker]
+                    estado["tempo_acumulado"].pop(ticker, None)
+                    estado["em_contagem"].pop(ticker, None)
 
                     try:
+                        # 2️⃣ Apaga primeiro no Supabase (para limpar antes do novo save)
                         apagar_estado_duravel("curto", apenas_ticker=ticker)
                         log(f"Registro de {ticker} removido do Supabase.", "🗑️")
                     except Exception as e:
                         log(f"Erro ao limpar {ticker} no Supabase: {e}", "⚠️")
 
-                    estado["ativos"] = [a for a in estado["ativos"] if a.get("ticker") != ticker]
-                    estado["tempo_acumulado"].pop(ticker, None)
-                    estado["em_contagem"].pop(ticker, None)
+                    # 3️⃣ Marca como removido e salva o estado limpo
                     estado["status"][ticker] = "✅ Ativado (removido)"
-
                     salvar_estado_duravel("curto", estado)
                     log(f"{ticker} removido completamente e persistido.", "💾")
 
                     continue  # próximo ativo
+
 
         # --------------------------------------------------
         # 🧹 SALVAR ESTADO GERAL E ESPERAR PRÓXIMO CICLO
