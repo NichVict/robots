@@ -88,15 +88,10 @@ log("=" * 60, "—")
 while True:
     now = agora_lx()
 
- 
     # ==================================================
-    # 🔄 RECARREGAR ESTADO DO SUPABASE (regra 1)
-    # ==================================================
-        # ==================================================
     # 🧹 LIMPEZA PREVENTIVA DE TICKERS REMOVIDOS
     # ==================================================
     try:
-        # Remove qualquer ticker marcado como "Removido" ou "Removendo"
         tickers_para_limpar = [
             t for t, s in estado.get("status", {}).items()
             if isinstance(s, str) and ("Removido" in s or "Removendo" in s)
@@ -106,14 +101,72 @@ while True:
                 estado["status"].pop(t, None)
                 estado["tempo_acumulado"].pop(t, None)
                 estado["em_contagem"].pop(t, None)
-            # Atualiza o Supabase com estado limpo
             salvar_estado_duravel("curto", estado)
             log(f"🧹 Limpou resíduos de {', '.join(tickers_para_limpar)} no início do ciclo.", "✅")
     except Exception as e:
         log(f"⚠️ Falha ao limpar resíduos de tickers removidos: {e}", "⚠️")
 
+    # ==================================================
+    # 🔄 RECARREGAR ESTADO DO SUPABASE (regra 1)
+    # ==================================================
+    try:
+        remoto = carregar_estado_duravel("curto")
+        if isinstance(remoto, dict):
+            estado_remoto_ativos = remoto.get("ativos", [])
 
+            # 🔒 Proteção anti-race: identifica tickers já removidos localmente
+            ativos_removidos = {
+                t for t, s in estado.get("status", {}).items()
+                if isinstance(s, str) and ("Removido" in s or "Removendo" in s or "Ativado (removido)" in s)
+            }
 
+            # 🔄 Atualiza lista de ativos, excluindo os já removidos
+            estado["ativos"] = [
+                a for a in estado_remoto_ativos
+                if a.get("ticker") not in ativos_removidos
+            ]
+
+            # 2) prepara dicionários
+            estado.setdefault("tempo_acumulado", {})
+            estado.setdefault("em_contagem", {})
+            estado.setdefault("status", {})
+            remoto.setdefault("tempo_acumulado", {})
+            remoto.setdefault("em_contagem", {})
+            remoto.setdefault("status", {})
+
+            # 3) mantém dados apenas dos tickers atuais
+            atuais = {a["ticker"] for a in estado["ativos"] if "ticker" in a}
+            novo_tempo = {}
+            novo_contagem = {}
+            novo_status = {}
+
+            for t in atuais:
+                if t in estado["tempo_acumulado"]:
+                    novo_tempo[t] = estado["tempo_acumulado"][t]
+                elif t in remoto["tempo_acumulado"]:
+                    novo_tempo[t] = remoto["tempo_acumulado"][t]
+
+                if t in estado["em_contagem"]:
+                    novo_contagem[t] = estado["em_contagem"][t]
+                elif t in remoto["em_contagem"]:
+                    novo_contagem[t] = remoto["em_contagem"][t]
+
+                if t in estado["status"]:
+                    novo_status[t] = estado["status"][t]
+                elif t in remoto["status"]:
+                    novo_status[t] = remoto["status"][t]
+
+            estado["tempo_acumulado"] = novo_tempo
+            estado["em_contagem"] = novo_contagem
+            estado["status"] = novo_status
+
+            log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
+        else:
+            log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
+    except Exception as e:
+        log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
+        time.sleep(30)
+        continue
 
     # ==================================================
     # 🕓 FLUXO NORMAL — DURANTE O PREGÃO
@@ -170,7 +223,6 @@ while True:
                 log(f"Preço inválido para {ticker}. Pulando...", "⚠️")
                 continue
 
-
             condicao = (
                 (operacao == "compra" and preco_atual >= preco_alvo)
                 or (operacao == "venda" and preco_atual <= preco_alvo)
@@ -194,7 +246,7 @@ while True:
                 # 🚀 Disparo do alerta — com bloqueio anti-duplicação
                 # ==================================================
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
-                    if estado["status"].get(ticker) in ["🚀 Disparado", "✅ Removendo...", "✅ Ativado (removido)"]:
+                    if estado["status"].get(ticker) in ["🚀 Disparado", "✅ Removendo...", "✅ Ativado (removido)", "🚀 Disparando..."]:
                         log(f"{ticker} já foi disparado ou está sendo removido. Ignorando duplicação.", "⏸️")
                         continue
 
@@ -212,14 +264,15 @@ while True:
                         # Marca imediatamente como 'Disparando...' no Supabase
                         estado["status"][ticker] = "🚀 Disparando..."
                         salvar_estado_duravel("curto", estado)
-                        log(f"🔒 {ticker} bloqueado como 'Disparando...' (transação aberta).", "🔐")
+                        log(f"🔒 {ticker} bloqueado (transação ativa no Supabase — evitando duplicação).", "🔐")
 
                     except Exception as e:
                         log(f"⚠️ Falha no bloqueio transacional de {ticker}: {e}", "⚠️")
+                        continue
 
-
-
-
+                    # ==================================================
+                    # ✉️ Envio do alerta
+                    # ==================================================
                     estado["status"][ticker] = "🚀 Disparado"
 
                     msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
@@ -295,8 +348,11 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
                     salvar_estado_duravel("curto", estado)
                     log(f"{ticker} removido completamente e persistido.", "💾")
 
-                    continue  # próximo ativo
+                    # 4️⃣ (Defensivo) remove o status do ticker e salva novamente para evitar resíduos
+                    estado["status"].pop(ticker, None)
+                    salvar_estado_duravel("curto", estado)
 
+                    continue  # próximo ativo
 
         # --------------------------------------------------
         # 🧹 SALVAR ESTADO GERAL E ESPERAR PRÓXIMO CICLO
@@ -304,4 +360,10 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
         salvar_estado_duravel("curto", estado)
         log("Estado salvo.", "💾")
         time.sleep(INTERVALO_VERIFICACAO)
+
+    else:
+        # Fora do pregão: dorme menos e mantém o loop vivo
+        faltam, prox_abertura = segundos_ate_abertura(now)
+        log(f"⏸️ Pregão fechado. Reabre em {formatar_duracao(faltam)} (às {prox_abertura.strftime('%H:%M')}).", "🌙")
+        time.sleep(min(300, max(60, faltam)))
 
