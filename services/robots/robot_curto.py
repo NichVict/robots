@@ -6,28 +6,24 @@ from zoneinfo import ZoneInfo
 from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
-from core.logger import log
+from core.logger import log  # ✅ Logger centralizado
 import builtins
 
 # ==================================================
 # 💬 LOGGING EM TEMPO REAL (Render-friendly)
 # ==================================================
+# Substitui o print padrão por versão com flush imediato
 print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 
 # ==================================================
 # ⚙️ CONFIGURAÇÕES
 # ==================================================
-STATE_KEY = "curto_przo_v1"  # ✅ Mantém o mesmo nome usado na interface e core.config
 TZ = ZoneInfo("Europe/Lisbon")
+STATE_KEY = "curto_przo_v1"
 HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
 HORARIO_FIM_PREGAO = datetime.time(23, 59, 0)
-INTERVALO_VERIFICACAO = 180      # 3 minutos
-TEMPO_ACUMULADO_MAXIMO = 480     # 8 minutos
-
-# Limites de segurança para evitar inchaço de logs
-LOG_MAX = 800
-ALERTAS_MAX = 200
-PRECOS_MAX_POR_TICKER = 500
+INTERVALO_VERIFICACAO = 180     # 3 minutos
+TEMPO_ACUMULADO_MAXIMO = 480    # 8 minutos
 
 # ==================================================
 # 🕒 FUNÇÕES DE TEMPO
@@ -39,97 +35,45 @@ def dentro_pregao(dt):
     t = dt.time()
     return HORARIO_INICIO_PREGAO <= t <= HORARIO_FIM_PREGAO
 
+def segundos_ate_abertura(dt):
+    abre = dt.replace(hour=HORARIO_INICIO_PREGAO.hour, minute=0, second=0, microsecond=0)
+    fecha = dt.replace(hour=HORARIO_FIM_PREGAO.hour, minute=0, second=0, microsecond=0)
+    if dt < abre:
+        return int((abre - dt).total_seconds()), abre
+    elif dt > fecha:
+        prox = abre + datetime.timedelta(days=1)
+        return int((prox - dt).total_seconds()), prox
+    else:
+        return 0, abre
+
 def formatar_duracao(segundos):
     return str(datetime.timedelta(seconds=int(segundos)))
-
-# ==================================================
-# 🧹 SANITIZAÇÃO DE ESTADO
-# ==================================================
-def sanitize_estado(estado):
-    """
-    Mantém apenas dados coerentes com os ativos atuais.
-    Remove tickers antigos, limpa logs e garante consistência.
-    """
-    if not isinstance(estado, dict):
-        return {
-            "ativos": [], "tempo_acumulado": {}, "em_contagem": {}, "status": {},
-            "historico_alertas": [], "precos_historicos": {}, "disparos": {},
-            "log_monitoramento": []
-        }
-
-    ativos = estado.get("ativos", []) or []
-    ativos_set = {a["ticker"] for a in ativos if isinstance(a, dict) and a.get("ticker")}
-
-    # Corrige status (sem emoji)
-    status = {}
-    for t, s in (estado.get("status") or {}).items():
-        s_low = str(s).lower()
-        if "dispar" in s_low:
-            status[t] = "disparado"
-        elif "contagem" in s_low:
-            status[t] = "em_contagem"
-        elif "monitor" in s_low:
-            status[t] = "monitorando"
-        else:
-            status[t] = "monitorando" if t in ativos_set else None
-    status = {t: v for t, v in status.items() if t in ativos_set and v is not None}
-
-    tempo = {t: float(estado.get("tempo_acumulado", {}).get(t, 0)) for t in ativos_set}
-    em_cont = {t: bool(estado.get("em_contagem", {}).get(t, False)) for t in ativos_set}
-
-    precos_hist = {}
-    for t in ativos_set:
-        linhas = (estado.get("precos_historicos", {}).get(t) or [])
-        if linhas:
-            precos_hist[t] = linhas[-PRECOS_MAX_POR_TICKER:]
-
-    disparos = {}
-    for t in ativos_set:
-        pts = (estado.get("disparos", {}).get(t) or [])
-        if pts:
-            disparos[t] = pts[-50:]
-
-    logs = estado.get("log_monitoramento", []) or []
-    if ativos_set:
-        logs_filtrados = []
-        for l in logs[-LOG_MAX:]:
-            if any(t in l for t in ativos_set) or "Robô" in l or "Estado salvo" in l:
-                logs_filtrados.append(l)
-        logs = logs_filtrados[-LOG_MAX:]
-    else:
-        logs = logs[-LOG_MAX:]
-
-    hist = []
-    for h in (estado.get("historico_alertas") or [])[-ALERTAS_MAX:]:
-        if h.get("ticker") in ativos_set:
-            hist.append(h)
-    hist = hist[-ALERTAS_MAX:]
-
-    return {
-        "ativos": list(ativos),
-        "tempo_acumulado": tempo,
-        "em_contagem": em_cont,
-        "status": status,
-        "historico_alertas": hist,
-        "precos_historicos": precos_hist,
-        "disparos": disparos,
-        "log_monitoramento": logs,
-    }
 
 # ==================================================
 # 🚀 INICIALIZAÇÃO
 # ==================================================
 log("Robô CURTO iniciado.", "🤖")
+estado = carregar_estado_duravel(STATE_KEY)
 
-estado = carregar_estado_duravel(STATE_KEY) or {}
+if not estado:
+    log("Falha ao carregar estado remoto — aguardando reconexão...", "⚠️")
+    while not estado:
+        time.sleep(60)
+        estado = carregar_estado_duravel(STATE_KEY)
+        if estado:
+            log("Estado remoto recuperado com sucesso.", "✅")
+else:
+    log("Estado carregado com sucesso.", "✅")
+
+if not isinstance(estado, dict):
+    estado = {}
+
 estado.setdefault("ativos", [])
 estado.setdefault("tempo_acumulado", {})
 estado.setdefault("em_contagem", {})
 estado.setdefault("status", {})
 estado.setdefault("historico_alertas", [])
-estado.setdefault("precos_historicos", {})
-estado.setdefault("disparos", {})
-estado.setdefault("log_monitoramento", [])
+estado.setdefault("ultima_data_abertura_enviada", None)
 
 log(f"{len(estado['ativos'])} ativos carregados.", "📦")
 log("=" * 60, "—")
@@ -140,24 +84,91 @@ log("=" * 60, "—")
 while True:
     now = agora_lx()
 
+    # ==================================================
+    # 🔄 RECARREGAR ESTADO DO SUPABASE
+    # ==================================================
     try:
-        remoto = carregar_estado_duravel(STATE_KEY) or {}
-        ativos_remotos = remoto.get("ativos", []) or []
-        estado["ativos"] = ativos_remotos
+        remoto = carregar_estado_duravel(STATE_KEY)
+        if isinstance(remoto, dict):
+            estado_remoto_ativos = remoto.get("ativos", [])
+            ativos_removidos = {
+                t for t, s in estado.get("status", {}).items()
+                if "Removido" in s or "Removendo" in s
+            }
+
+            estado["ativos"] = [
+                a for a in estado_remoto_ativos
+                if a.get("ticker") not in ativos_removidos
+            ]
+
+            if ativos_removidos:
+                log(f"Ignorando {len(ativos_removidos)} ativo(s) removido(s): {', '.join(ativos_removidos)}", "🧹")
+
+            estado.setdefault("tempo_acumulado", {})
+            estado.setdefault("em_contagem", {})
+            estado.setdefault("status", {})
+            remoto.setdefault("tempo_acumulado", {})
+            remoto.setdefault("em_contagem", {})
+            remoto.setdefault("status", {})
+
+            atuais = {a["ticker"] for a in estado["ativos"] if "ticker" in a}
+            novo_tempo = {}
+            novo_contagem = {}
+            novo_status = {}
+
+            for t in atuais:
+                if t in estado["tempo_acumulado"]:
+                    novo_tempo[t] = estado["tempo_acumulado"][t]
+                elif t in remoto["tempo_acumulado"]:
+                    novo_tempo[t] = remoto["tempo_acumulado"][t]
+
+                if t in estado["em_contagem"]:
+                    novo_contagem[t] = estado["em_contagem"][t]
+                elif t in remoto["em_contagem"]:
+                    novo_contagem[t] = remoto["em_contagem"][t]
+
+                if t in estado["status"]:
+                    novo_status[t] = estado["status"][t]
+                elif t in remoto["status"]:
+                    novo_status[t] = remoto["status"][t]
+
+            estado["tempo_acumulado"] = novo_tempo
+            estado["em_contagem"] = novo_contagem
+            estado["status"] = novo_status
+            log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
+        else:
+            log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
     except Exception as e:
-        log(f"Erro ao recarregar estado remoto: {e}", "⚠️")
+        log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
 
-    ativos = estado["ativos"]
-    if not ativos:
-        time.sleep(INTERVALO_VERIFICACAO)
-        continue
-
+    # ==================================================
+    # 🕓 FLUXO NORMAL — DURANTE O PREGÃO
+    # ==================================================
     if dentro_pregao(now):
-        log(f"Monitorando {len(ativos)} ativos...", "🟢")
+        data_hoje = str(now.date())
+        ultima = str(estado.get("ultima_data_abertura_enviada", ""))
 
-        for ativo in list(ativos):
+        # 🔒 Mensagem de abertura diária
+        if ultima != data_hoje:
+            enviar_alerta(
+                "curto",
+                "📣 Pregão Aberto",
+                "<b>O pregão foi iniciado! 🟢</b><br><i>O robô de curto prazo está monitorando os ativos.</i>",
+                "🤖 Robô CURTO iniciando monitoramento — Pregão Aberto!"
+            )
+            estado["ultima_data_abertura_enviada"] = data_hoje
+            log("🧹 Limpando contagens do dia anterior (novo pregão iniciado)...", "🔁")
+            estado["tempo_acumulado"].clear()
+            estado["em_contagem"].clear()
+            estado["status"].clear()
+            salvar_estado_duravel(STATE_KEY, estado)
+            log("Contagens zeradas com sucesso para o novo pregão.", "✅")
+
+        log(f"Monitorando {len(estado['ativos'])} ativos...", "🟢")
+
+        for ativo in estado["ativos"]:
             ticker = ativo["ticker"]
-            preco_alvo = float(ativo["preco"])
+            preco_alvo = ativo["preco"]
             operacao = ativo["operacao"]
             tk_full = f"{ticker}.SA" if not ticker.endswith(".SA") else ticker
 
@@ -165,37 +176,52 @@ while True:
                 preco_atual = obter_preco_atual(tk_full)
                 if isinstance(preco_atual, dict):
                     preco_atual = preco_atual.get("preco") or preco_atual.get("last") or preco_atual.get("price")
-                if not isinstance(preco_atual, (int, float)) or preco_atual <= 0:
-                    log(f"Preço inválido para {ticker}. Pulando...", "⚠️")
+                if not isinstance(preco_atual, (int, float)):
+                    log(f"Retorno inesperado ao obter preço de {ticker}: {type(preco_atual).__name__}. Pulando...", "⚠️")
                     continue
             except Exception as e:
                 log(f"Erro ao obter preço de {ticker}: {e}", "⚠️")
                 continue
 
+            if preco_atual <= 0:
+                log(f"Preço inválido para {ticker}. Pulando...", "⚠️")
+                continue
+
             condicao = (
-                (operacao == "compra" and preco_atual >= preco_alvo) or
-                (operacao == "venda"  and preco_atual <= preco_alvo)
+                (operacao == "compra" and preco_atual >= preco_alvo)
+                or (operacao == "venda" and preco_atual <= preco_alvo)
             )
 
-            estado["status"].setdefault(ticker, "monitorando")
-
+            # -----------------------------
+            # BLOCO DE CONTAGEM
+            # -----------------------------
             if condicao:
-                estado["status"][ticker] = "em_contagem"
+                estado["status"][ticker] = "🟡 Em contagem"
 
                 if not estado["em_contagem"].get(ticker, False):
                     estado["em_contagem"][ticker] = True
                     estado["tempo_acumulado"][ticker] = 0
                     log(f"{ticker} atingiu o alvo ({preco_alvo:.2f}). Iniciando contagem...", "⚠️")
                 else:
-                    estado["tempo_acumulado"][ticker] = float(estado["tempo_acumulado"].get(ticker, 0)) + INTERVALO_VERIFICACAO
+                    estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
                     log(f"{ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.", "⌛")
 
+                # ==================================================
+                # 🚀 Disparo do alerta — com bloqueio anti-duplicação
+                # ==================================================
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
-                    estado["status"][ticker] = "disparado"
+                    if estado["status"].get(ticker) in ["🚀 Disparado", "✅ Removendo...", "✅ Ativado (removido)"]:
+                        log(f"{ticker} já foi disparado ou está sendo removido. Ignorando duplicação.", "⏸️")
+                        continue
+
+                    estado["status"][ticker] = "🚀 Disparado"
 
                     msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
                     ticker_symbol_sem_ext = ticker.replace(".SA", "")
 
+                    # =============================
+                    # ✉️ MENSAGEM DE ALERTA COMPLETA
+                    # =============================
                     msg_tg = f"""
 💥 <b>ALERTA DE {msg_op.upper()} ATIVADA!</b>\n\n
 <b>Ticker:</b> {ticker_symbol_sem_ext}\n
@@ -233,12 +259,8 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
 </html>
 """.strip()
 
-                    try:
-                        enviar_alerta("curto", f"Alerta {msg_op.upper()} - {ticker_symbol_sem_ext}", msg_html, msg_tg)
-                    except Exception as e:
-                        log(f"Erro ao enviar alerta de {ticker}: {e}", "⚠️")
+                    enviar_alerta("curto", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
 
-                    estado.setdefault("historico_alertas", [])
                     estado["historico_alertas"].append({
                         "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
                         "ticker": ticker,
@@ -247,19 +269,35 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
                         "preco_atual": preco_atual
                     })
 
+                    # ==================================================
+                    # ✅ LIMPEZA DEFINITIVA APÓS ALERTA
+                    # ==================================================
+                    estado["status"][ticker] = "✅ Removendo..."
+                    log(f"{ticker} marcado como 'Removendo...'", "🗂️")
+
                     estado["ativos"] = [a for a in estado["ativos"] if a.get("ticker") != ticker]
                     estado["tempo_acumulado"].pop(ticker, None)
                     estado["em_contagem"].pop(ticker, None)
+                    estado["precos_historicos"] = estado.get("precos_historicos", {})
+                    estado["precos_historicos"].pop(ticker, None)
 
-    # ==================================================
-    # 💾 SALVAR ESTADO (SUBSTITUI COMPLETAMENTE)
-    # ==================================================
-    estado_sanit = sanitize_estado(estado)
-    try:
-        apagar_estado_duravel(STATE_KEY)
-        salvar_estado_duravel(STATE_KEY, estado_sanit)
+                    try:
+                        # ✅ CORREÇÃO: apaga somente o ticker
+                        apagar_estado_duravel(STATE_KEY, apenas_ticker=ticker)
+                        salvar_estado_duravel(STATE_KEY, estado)
+                        log(f"{ticker} removido do Supabase e estado atualizado.", "🗑️")
+                    except Exception as e:
+                        log(f"Erro ao limpar {ticker} no Supabase: {e}", "⚠️")
+
+                    estado["status"][ticker] = "✅ Ativado (removido)"
+                    salvar_estado_duravel(STATE_KEY, estado)
+                    log(f"{ticker} removido completamente e persistido.", "💾")
+                    continue
+
+        # --------------------------------------------------
+        # 🧹 SALVAR ESTADO GERAL E ESPERAR PRÓXIMO CICLO
+        # --------------------------------------------------
+        salvar_estado_duravel(STATE_KEY, estado)
         log("Estado salvo.", "💾")
-    except Exception as e:
-        log(f"Erro ao salvar estado: {e}", "⚠️")
+        time.sleep(INTERVALO_VERIFICACAO)
 
-    time.sleep(INTERVALO_VERIFICACAO)

@@ -122,8 +122,8 @@ def salvar_estado_duravel(nome_robo: str, estado: dict) -> None:
 def apagar_estado_duravel(nome_robo: str, apenas_ticker: Optional[str] = None) -> None:
     """
     Remoção segura:
-      - Sem `apenas_ticker`: bloqueada.
-      - Com `apenas_ticker`: remove só aquele ticker e regrava.
+      - Sem `apenas_ticker`: bloqueada (proteção contra wipe total).
+      - Com `apenas_ticker`: remove o ticker e todos os vestígios dele do estado.
     """
     try:
         sb, tabela, chave = _sb_and_table(nome_robo)
@@ -134,28 +134,36 @@ def apagar_estado_duravel(nome_robo: str, apenas_ticker: Optional[str] = None) -
     try:
         res = sb.table(tabela).select("k,v").eq("k", chave).execute()
         if not res.data:
-            print(f"ℹ️ Nenhum estado para '{nome_robo}'.")
+            print(f"ℹ️ Nenhum estado encontrado para '{nome_robo}'.")
             return
+
         estado = res.data[0]["v"] or {}
 
+        # Bloqueia tentativa de apagar tudo
         if not apenas_ticker:
             print(f"🚫 Ação bloqueada: tentativa de apagar o estado completo de '{nome_robo}'.")
             return
 
-        # Remove o ticker
-        ativos_antes = len(estado.get("ativos", []))
-        estado["ativos"] = [a for a in estado.get("ativos", []) if a.get("ticker") != apenas_ticker]
+        ticker = apenas_ticker.strip().upper()
+        print(f"🧹 Limpando '{ticker}' do estado remoto '{nome_robo}'...")
 
-        for campo in ("tempo_acumulado", "em_contagem", "status"):
+        # Limpa o ticker em todos os blocos principais
+        for campo in ("ativos", "historico_alertas"):
+            if isinstance(estado.get(campo), list):
+                estado[campo] = [a for a in estado[campo] if a.get("ticker", "").upper() != ticker]
+
+        for campo in ("tempo_acumulado", "em_contagem", "status", "precos_historicos", "ultimo_update_tempo"):
             if isinstance(estado.get(campo), dict):
-                estado[campo].pop(apenas_ticker, None)
+                estado[campo].pop(ticker, None)
 
-        ativos_depois = len(estado.get("ativos", []))
-        if ativos_depois < ativos_antes:
-            sb.table(tabela).upsert({"k": chave, "v": estado}).execute()
-            print(f"🧹 Ticker '{apenas_ticker}' removido do estado de '{nome_robo}'.")
-        else:
-            print(f"ℹ️ Ticker '{apenas_ticker}' não estava no estado de '{nome_robo}'.")
+        # Marca último escritor
+        estado["_last_writer"] = "robot_render_cleanup"
+        estado["_last_writer_ts"] = datetime.datetime.utcnow().isoformat()
+
+        # Persiste
+        sb.table(tabela).upsert({"k": chave, "v": estado}).execute()
+        print(f"✅ Ticker '{ticker}' removido completamente de '{nome_robo}'.")
+
     except Exception as e:
         print(f"⚠️ Erro ao tentar apagar estado de {nome_robo}: {e}")
 
