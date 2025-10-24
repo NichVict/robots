@@ -173,6 +173,29 @@ while True:
 
         log(f"Monitorando {len(estado['ativos'])} ativos...", "🟢")
 
+        # ==================================================
+        # 📊 Exibe os tickers e preços atuais
+        # ==================================================
+        if estado["ativos"]:
+            detalhes = []
+            for ativo in estado["ativos"]:
+                ticker = ativo["ticker"]
+                tk_full = f"{ticker}.SA" if not ticker.endswith(".SA") else ticker
+                try:
+                    preco_atual = obter_preco_atual(tk_full)
+                    if isinstance(preco_atual, dict):
+                        preco_atual = preco_atual.get("preco") or preco_atual.get("last") or preco_atual.get("price")
+                    if isinstance(preco_atual, (int, float)):
+                        detalhes.append(f"• {ticker} — preço atual: R$ {preco_atual:.2f}")
+                except Exception as e:
+                    detalhes.append(f"• {ticker} — erro ao obter preço ({e})")
+            if detalhes:
+                log("     \n".join(detalhes), "💬")
+
+        # ==================================================
+        # 🔍 Verificação dos ativos
+        # ==================================================
+
         for ativo in estado["ativos"]:
             ticker = ativo["ticker"]
             preco_alvo = ativo["preco"]
