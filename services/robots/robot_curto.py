@@ -8,6 +8,13 @@ from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
 from core.logger import log  # ✅ Logger centralizado
 import builtins
+import logging
+
+# ==================================================
+# 🚫 DESATIVAR LOGS DE HTTP E SUPABASE
+# ==================================================
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("supabase").setLevel(logging.WARNING)
 
 # ==================================================
 # 💬 LOGGING EM TEMPO REAL (Render-friendly)
@@ -299,5 +306,13 @@ A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
         # --------------------------------------------------
         salvar_estado_duravel(STATE_KEY, estado)
         log("Estado salvo.", "💾")
+        time.sleep(INTERVALO_VERIFICACAO)
+
+    # ==================================================
+    # 🌙 FORA DO PREGÃO — MODO ESPERA
+    # ==================================================
+    else:
+        segundos, abre = segundos_ate_abertura(now)
+        log(f"🌙 Fora do pregão. Próxima abertura em {formatar_duracao(segundos)} (às {abre.time()}).", "⏸️")
         time.sleep(INTERVALO_VERIFICACAO)
 

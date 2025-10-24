@@ -84,11 +84,10 @@ def carregar_estado_duravel(nome_robo: str) -> Optional[dict]:
 # ==================================================
 # 💾 Salvar (SEGURO)
 # ==================================================
+# ==================================================
+# 💾 Salvar (SEGURO)
+# ==================================================
 def salvar_estado_duravel(nome_robo: str, estado: dict) -> None:
-    """
-    Salva o estado do robô por upsert NA MESMA CHAVE.
-    ✅ Proteção: ignora estados vazios para não apagar linha da nuvem.
-    """
     try:
         sb, tabela, chave = _sb_and_table(nome_robo)
     except Exception as e:
@@ -99,22 +98,25 @@ def salvar_estado_duravel(nome_robo: str, estado: dict) -> None:
         print(f"⛔ Estado vazio — salvamento ignorado ({nome_robo}).")
         return
 
-    # Proteção extra: se não há nenhum ativo nem status, não salva
     ativos = estado.get("ativos", [])
     status = estado.get("status", {})
     if not ativos and not status:
         print(f"🛑 Ignorado: estado sem ativos e sem status ({nome_robo}).")
         return
 
-    # Anexa timestamp e origem
     estado["_last_writer"] = "robot_render"
     estado["_last_writer_ts"] = datetime.datetime.utcnow().isoformat()
 
     try:
         sb.table(tabela).upsert({"k": chave, "v": estado}).execute()
-        print(f"💾 Estado de '{nome_robo}' salvo com sucesso ({len(ativos)} ativos).")
+        if ativos:
+            resumo = ", ".join([f"{a['ticker']} (R$ {a.get('preco', 0):.2f})" for a in ativos])
+            print(f"💾 Estado de '{nome_robo}' salvo com sucesso ({len(ativos)} ativo(s)): {resumo}.")
+        else:
+            print(f"💾 Estado de '{nome_robo}' salvo com sucesso (nenhum ativo registrado).")
     except Exception as e:
         print(f"⚠️ Erro ao salvar estado de {nome_robo}: {e}")
+
 
 # ==================================================
 # 🧹 Apagar (SEMPRE GRANULAR)
