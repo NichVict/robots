@@ -228,7 +228,7 @@ while True:
 🛑 <b>ENCERRAMENTO (STOP) ATIVADO!</b>\n
 <b>Ticker:</b> {ticker_sem_ext}\n
 <b>Operação anterior:</b> {msg_operacao_anterior}\n
-<b>Operação para encerrar:</b> {msg_op_encerrar}\n
+<b>Realize a Operação de:</b> {msg_op_encerrar}\n
 <b>STOP (alvo):</b> R$ {preco_stop:.2f}\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n
 📊 <a href='https://br.tradingview.com/symbols/{ticker_sem_ext}'>Abrir gráfico no TradingView</a>\n
