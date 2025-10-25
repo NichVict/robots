@@ -286,7 +286,13 @@ while True:
 </html>
 """.strip()
 
-                    enviar_alerta("clube", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
+                    
+                    enviar_alerta(                        
+                        "clube",
+                        f"🔥 ALERTA CLUBE — {ticker}",
+                        msg_html,
+                        msg_tg
+                    )
 
                     estado["historico_alertas"].append({
                         "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
