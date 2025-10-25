@@ -268,7 +268,7 @@ while True:
 """.strip()
 
                     enviar_alerta(                                               
-                        "loss_curtissimo",
+                        "loss_curto",
                         f"🔥 ALERTA CARTEIRA DE CURTO PRAZO — {ticker}",
                         msg_html,
                         msg_tg
