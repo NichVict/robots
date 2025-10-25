@@ -226,6 +226,34 @@ while True:
 
                     ticker_sem_ext = ticker.replace(".SA", "")
 
+                    
+# =============================
+# ✉️ MENSAGEM HTML (EMAIL)
+# =============================
+                    msg_html = f"""
+<html>
+  <body style="font-family:Arial,sans-serif; background-color:#0b1220; color:#e5e7eb; padding:20px;">
+    <h2 style="color:#ef4444;">🛑 ENCERRAMENTO (STOP) ATIVADO!</h2>
+    <p><b>Ticker:</b> {ticker_sem_ext}</p>
+    <p><b>Operação anterior:</b> {msg_operacao_anterior}</p>
+    <p><b>Realize a Operação de:</b> {msg_op_encerrar}</p>
+    <p><b>STOP (alvo):</b> R$ {preco_stop:.2f}</p>
+    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>
+    <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_sem_ext}" style="color:#60a5fa;">Ver gráfico no TradingView</a></p>
+    <hr style="border:1px solid #3b82f6; margin:20px 0;">
+    <p style="font-size:11px; line-height:1.5; color:#9ca3af;">
+      <b>COMPLIANCE:</b> mensagem de encerramento baseada em nossa carteira e não constitui recomendação.<br>
+      A decisão é exclusiva do destinatário. Conteúdo confidencial e de uso restrito.<br>
+      © 1milhão Invest — Todos os direitos reservados.
+    </p>
+    <p style="margin-top:10px;">🤖 Robot 1milhão Invest</p>
+  </body>
+</html>
+""".strip()
+
+# =============================
+# 💬 MENSAGEM TELEGRAM
+# =============================
                     msg_tg = f"""
 🛑 <b>ENCERRAMENTO (STOP) ATIVADO!</b>\n
 <b>Ticker:</b> {ticker_sem_ext}\n
@@ -240,7 +268,7 @@ while True:
 🤖 Robot 1milhão Invest
 """.strip()
 
-                    enviar_alerta("loss_curtissimo", f"🛑 ENCERRAMENTO (STOP) - {ticker}", msg_tg, msg_tg)
+                    enviar_alerta("loss_curtissimo", f"🛑 ENCERRAMENTO (STOP) - {ticker}", msg_html, msg_tg)
 
                     estado["historico_alertas"].append({
                         "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
