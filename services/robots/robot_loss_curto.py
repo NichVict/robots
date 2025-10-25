@@ -58,7 +58,7 @@ def formatar_duracao(segundos):
 # ==================================================
 # 🚀 INICIALIZAÇÃO
 # ==================================================
-log("Robô LOSS CURTO iniciado.", "🤖")
+log("Robô iniciado.", "🤖")
 estado = carregar_estado_duravel(STATE_KEY)
 
 if not estado:
@@ -159,8 +159,8 @@ while True:
             enviar_alerta(
                 "loss_curto",
                 "📣 Pregão Aberto",
-                "<b>🛑 O pregão foi iniciado!</b><br><i>O robô LOSS CURTO está monitorando stops de encerramento.</i>",
-                "🛑 Robô LOSS CURTO ativo — Pregão Aberto!"
+                "<b>🤖 O pregão foi iniciado!</b><br><i>O robô LOSS CURTO está monitorando stops de encerramento.</i>",
+                "🤖 Robô ativo — Pregão Aberto!"
             )
             estado["ultima_data_abertura_enviada"] = data_hoje
             log("🧹 Limpando contagens do dia anterior (novo pregão iniciado)...", "🔁")
@@ -267,7 +267,12 @@ while True:
 🤖 Robot 1milhão Invest
 """.strip()
 
-                    enviar_alerta("loss_curtissimo", f"🛑 ENCERRAMENTO (STOP) - {ticker}", msg_html, msg_tg)
+                    enviar_alerta(                                               
+                        "loss_curtissimo",
+                        f"🔥 ALERTA CARTEIRA DE CURTO PRAZO — {ticker}",
+                        msg_html,
+                        msg_tg
+                    )
 
                     estado["historico_alertas"].append({
                         "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
