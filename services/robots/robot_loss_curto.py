@@ -139,8 +139,8 @@ while True:
 
             # 💡 Condição de STOP (zona inversa)
             condicao = (
-                (operacao == "compra" and preco_atual >= preco_alvo)
-                or (operacao == "venda" and preco_atual <= preco_alvo)
+                (operacao == "compra" and preco_atual <= preco_alvo)
+                or (operacao == "venda" and preco_atual >= preco_alvo)
             )
 
             # -----------------------------
