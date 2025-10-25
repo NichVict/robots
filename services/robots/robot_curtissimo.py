@@ -3,18 +3,34 @@
 import time
 import datetime
 from zoneinfo import ZoneInfo
-from core.state import carregar_estado_duravel, salvar_estado_duravel
+from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
+from core.logger import log  # ✅ Logger centralizado
+import builtins
+import logging
+
+# ==================================================
+# 🚫 DESATIVAR LOGS DE HTTP E SUPABASE
+# ==================================================
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("supabase").setLevel(logging.WARNING)
+
+# ==================================================
+# 💬 LOGGING EM TEMPO REAL (Render-friendly)
+# ==================================================
+# Substitui o print padrão por versão com flush imediato
+print = lambda *args, **kwargs: builtins.print(*args, **kwargs, flush=True)
 
 # ==================================================
 # ⚙️ CONFIGURAÇÕES
 # ==================================================
 TZ = ZoneInfo("Europe/Lisbon")
-HORARIO_INICIO_PREGAO = datetime.time(14, 0, 0)
-HORARIO_FIM_PREGAO = datetime.time(21, 0, 0)
-INTERVALO_VERIFICACAO = 300       # 5 minutos
-TEMPO_ACUMULADO_MAXIMO = 1500     # 25 minutos
+STATE_KEY = "curtissimo_przo_v1"
+HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
+HORARIO_FIM_PREGAO = datetime.time(23, 59, 0)
+INTERVALO_VERIFICACAO = 60     # 3 minutos
+TEMPO_ACUMULADO_MAXIMO = 120   # 8 minutos
 
 # ==================================================
 # 🕒 FUNÇÕES DE TEMPO
@@ -43,8 +59,18 @@ def formatar_duracao(segundos):
 # ==================================================
 # 🚀 INICIALIZAÇÃO
 # ==================================================
-print("🤖 Robô CURTÍSSIMO iniciado.")
-estado = carregar_estado_duravel("curtissimo")
+log("Robô curtissimo iniciado.", "🤖")
+estado = carregar_estado_duravel(STATE_KEY)
+
+if not estado:
+    log("Falha ao carregar estado remoto — aguardando reconexão...", "⚠️")
+    while not estado:
+        time.sleep(60)
+        estado = carregar_estado_duravel(STATE_KEY)
+        if estado:
+            log("Estado remoto recuperado com sucesso.", "✅")
+else:
+    log("Estado carregado com sucesso.", "✅")
 
 if not isinstance(estado, dict):
     estado = {}
@@ -55,20 +81,9 @@ estado.setdefault("em_contagem", {})
 estado.setdefault("status", {})
 estado.setdefault("historico_alertas", [])
 estado.setdefault("ultima_data_abertura_enviada", None)
-# evita alertas duplicados no mesmo dia
-estado.setdefault("eventos_enviados", {})
 
-# Converte data, se vier como datetime
-try:
-    if isinstance(estado["ultima_data_abertura_enviada"], datetime.date):
-        estado["ultima_data_abertura_enviada"] = estado["ultima_data_abertura_enviada"].isoformat()
-    elif not isinstance(estado["ultima_data_abertura_enviada"], str):
-        estado["ultima_data_abertura_enviada"] = None
-except Exception:
-    estado["ultima_data_abertura_enviada"] = None
-
-print(f"📦 {len(estado['ativos'])} ativos carregados.")
-print("=" * 60)
+log(f"{len(estado['ativos'])} ativos carregados.", "📦")
+log("=" * 60, "—")
 
 # ==================================================
 # 🔁 LOOP PRINCIPAL
@@ -77,29 +92,111 @@ while True:
     now = agora_lx()
 
     # ==================================================
-    # ⏰ HORÁRIO DE PREGÃO
+    # 🔄 RECARREGAR ESTADO DO SUPABASE
+    # ==================================================
+    try:
+        remoto = carregar_estado_duravel(STATE_KEY)
+        if isinstance(remoto, dict):
+            estado_remoto_ativos = remoto.get("ativos", [])
+            ativos_removidos = {
+                t for t, s in estado.get("status", {}).items()
+                if "Removido" in s or "Removendo" in s
+            }
+
+            estado["ativos"] = [
+                a for a in estado_remoto_ativos
+                if a.get("ticker") not in ativos_removidos
+            ]
+
+            if ativos_removidos:
+                log(f"Ignorando {len(ativos_removidos)} ativo(s) removido(s): {', '.join(ativos_removidos)}", "🧹")
+
+            estado.setdefault("tempo_acumulado", {})
+            estado.setdefault("em_contagem", {})
+            estado.setdefault("status", {})
+            remoto.setdefault("tempo_acumulado", {})
+            remoto.setdefault("em_contagem", {})
+            remoto.setdefault("status", {})
+
+            atuais = {a["ticker"] for a in estado["ativos"] if "ticker" in a}
+            novo_tempo = {}
+            novo_contagem = {}
+            novo_status = {}
+
+            for t in atuais:
+                if t in estado["tempo_acumulado"]:
+                    novo_tempo[t] = estado["tempo_acumulado"][t]
+                elif t in remoto["tempo_acumulado"]:
+                    novo_tempo[t] = remoto["tempo_acumulado"][t]
+
+                if t in estado["em_contagem"]:
+                    novo_contagem[t] = estado["em_contagem"][t]
+                elif t in remoto["em_contagem"]:
+                    novo_contagem[t] = remoto["em_contagem"][t]
+
+                if t in estado["status"]:
+                    novo_status[t] = estado["status"][t]
+                elif t in remoto["status"]:
+                    novo_status[t] = remoto["status"][t]
+
+            estado["tempo_acumulado"] = novo_tempo
+            estado["em_contagem"] = novo_contagem
+            estado["status"] = novo_status
+            log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
+        else:
+            log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
+    except Exception as e:
+        log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
+
+    # ==================================================
+    # 🕓 FLUXO NORMAL — DURANTE O PREGÃO
     # ==================================================
     if dentro_pregao(now):
         data_hoje = str(now.date())
         ultima = str(estado.get("ultima_data_abertura_enviada", ""))
 
-        # 🔒 Envia mensagem de abertura 1x por dia
+        # 🔒 Mensagem de abertura diária
         if ultima != data_hoje:
             enviar_alerta(
                 "curtissimo",
                 "📣 Pregão Aberto",
-                "<b>O pregão foi iniciado! 🟢</b><br><i>O robô de curtíssimo prazo está monitorando os ativos.</i>",
-                "🤖 Robô CURTÍSSIMO iniciando monitoramento — Pregão Aberto!"
+                "<b>O pregão foi iniciado! 🟢</b><br><i>O robô de curtissimo prazo está monitorando os ativos.</i>",
+                "🤖 Robô curtissimo iniciando monitoramento — Pregão Aberto!"
             )
             estado["ultima_data_abertura_enviada"] = data_hoje
-            salvar_estado_duravel("curtissimo", estado)
-            print(f"[{now.strftime('%H:%M:%S')}] 📣 Mensagem de abertura enviada ({data_hoje}).\n")
+            log("🧹 Limpando contagens do dia anterior (novo pregão iniciado)...", "🔁")
+            estado["tempo_acumulado"].clear()
+            estado["em_contagem"].clear()
+            estado["status"].clear()
+            salvar_estado_duravel(STATE_KEY, estado)
+            log("Contagens zeradas com sucesso para o novo pregão.", "✅")
 
-        print(f"[{now.strftime('%H:%M:%S')}] 🟢 Monitorando {len(estado['ativos'])} ativos...")
+        log(f"Monitorando {len(estado['ativos'])} ativos...", "🟢")
 
-        tickers_para_remover = []
+        # ==================================================
+        # 📊 Exibe os tickers e preços atuais
+        # ==================================================
+        if estado["ativos"]:
+            detalhes = []
+            for ativo in estado["ativos"]:
+                ticker = ativo["ticker"]
+                tk_full = f"{ticker}.SA" if not ticker.endswith(".SA") else ticker
+                try:
+                    preco_atual = obter_preco_atual(tk_full)
+                    if isinstance(preco_atual, dict):
+                        preco_atual = preco_atual.get("preco") or preco_atual.get("last") or preco_atual.get("price")
+                    if isinstance(preco_atual, (int, float)):
+                        detalhes.append(f"• {ticker} — preço atual: R$ {preco_atual:.2f}")
+                except Exception as e:
+                    detalhes.append(f"• {ticker} — erro ao obter preço ({e})")
+            if detalhes:
+                log("     \n".join(detalhes), "💬")
 
-        for ativo in list(estado["ativos"]):
+        # ==================================================
+        # 🔍 Verificação dos ativos
+        # ==================================================
+
+        for ativo in estado["ativos"]:
             ticker = ativo["ticker"]
             preco_alvo = ativo["preco"]
             operacao = ativo["operacao"]
@@ -107,12 +204,17 @@ while True:
 
             try:
                 preco_atual = obter_preco_atual(tk_full)
+                if isinstance(preco_atual, dict):
+                    preco_atual = preco_atual.get("preco") or preco_atual.get("last") or preco_atual.get("price")
+                if not isinstance(preco_atual, (int, float)):
+                    log(f"Retorno inesperado ao obter preço de {ticker}: {type(preco_atual).__name__}. Pulando...", "⚠️")
+                    continue
             except Exception as e:
-                print(f"⚠️ Erro ao obter preço de {ticker}: {e}")
+                log(f"Erro ao obter preço de {ticker}: {e}", "⚠️")
                 continue
 
-            if not preco_atual or preco_atual <= 0:
-                print(f"⚠️ Preço inválido para {ticker}. Pulando...")
+            if preco_atual <= 0:
+                log(f"Preço inválido para {ticker}. Pulando...", "⚠️")
                 continue
 
             condicao = (
@@ -129,105 +231,107 @@ while True:
                 if not estado["em_contagem"].get(ticker, False):
                     estado["em_contagem"][ticker] = True
                     estado["tempo_acumulado"][ticker] = 0
-                    print(f"⚠️ {ticker} atingiu o alvo ({preco_alvo:.2f}). Iniciando contagem...")
+                    log(f"{ticker} atingiu o alvo ({preco_alvo:.2f}). Iniciando contagem...", "⚠️")
                 else:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
-                    print(f"⌛ {ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.")
+                    log(f"{ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.", "⌛")
 
-                # 🚀 Disparo do alerta (dedupe por dia)
+                # ==================================================
+                # 🚀 Disparo do alerta — com bloqueio anti-duplicação
+                # ==================================================
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
-                    event_id = f"curtissimo|{ticker}|{operacao}|{preco_alvo:.2f}|{data_hoje}"
-                    if estado["eventos_enviados"].get(event_id):
-                        print(f"🔁 {ticker}: alerta já enviado hoje. Ignorando.")
-                    else:
-                        estado["eventos_enviados"][event_id] = True
-                        estado["status"][ticker] = "🚀 Disparado"
+                    if estado["status"].get(ticker) in ["🚀 Disparado", "✅ Removendo...", "✅ Ativado (removido)"]:
+                        log(f"{ticker} já foi disparado ou está sendo removido. Ignorando duplicação.", "⏸️")
+                        continue
 
-                        msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
-                        ticker_symbol_sem_ext = ticker.replace(".SA", "")
+                    estado["status"][ticker] = "🚀 Disparado"
 
-                        msg_tg = f"""
+                    msg_op = "VENDA A DESCOBERTO" if operacao == "venda" else "COMPRA"
+                    ticker_symbol_sem_ext = ticker.replace(".SA", "")
+
+                    # =============================
+                    # ✉️ MENSAGEM DE ALERTA COMPLETA
+                    # =============================
+                    msg_tg = f"""
 💥 <b>ALERTA DE {msg_op.upper()} ATIVADA!</b>\n\n
 <b>Ticker:</b> {ticker_symbol_sem_ext}\n
 <b>Preço alvo:</b> R$ {preco_alvo:.2f}\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n\n
 📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>\n\n
-<em>
-COMPLIANCE: Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.
-A compra ou venda é de total decisão e responsabilidade do Destinatário.
-Esta informação é CONFIDENCIAL, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.
-Se você NÃO for DESTINATÁRIO ou pessoa autorizada a recebê-lo, NÃO PODE usar, copiar, transmitir, retransmitir
-ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.
-A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.
-</em>
+───────────────\n
+<i><b>COMPLIANCE:</b> mensagem baseada em nossa carteira e não constitui recomendação formal. A decisão de compra ou venda é exclusiva do destinatário. Conteúdo confidencial, uso restrito ao destinatário autorizado. © 1milhão Invest.</i>\n
+───────────────\n
+🤖 Robot 1milhão Invest
 """.strip()
 
-                        msg_html = f"""
+                    msg_html = f"""
 <html>
   <body style="font-family:Arial,sans-serif; background-color:#0b1220; color:#e5e7eb; padding:20px;">
     <h2 style="color:#3b82f6;">💥 ALERTA DE {msg_op.upper()} ATIVADA!</h2>
     <p><b>Ticker:</b> {ticker_symbol_sem_ext}</p>
     <p><b>Preço alvo:</b> R$ {preco_alvo:.2f}</p>
-    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>    
+    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>
     <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}" style="color:#60a5fa;">Ver gráfico no TradingView</a></p>
     <hr style="border:1px solid #3b82f6; margin:20px 0;">
-    <p style="font-size:11px; line-height:1.4; color:#9ca3af;">
+    <p style="font-size:11px; line-height:1.5; color:#9ca3af;">
       <b>COMPLIANCE:</b> Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.<br>
       A compra ou venda é de total decisão e responsabilidade do Destinatário.<br>
-      Esta informação é <b>CONFIDENCIAL</b>, de propriedade do Canal 1milhao e de seu DESTINATÁRIO tão somente.<br>
+      Esta informação é <b>CONFIDENCIAL</b>, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.<br>
       Se você <b>NÃO</b> for DESTINATÁRIO ou pessoa autorizada a recebê-lo, <b>NÃO PODE</b> usar, copiar, transmitir, retransmitir
       ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.<br>
-      A Lista de Ações do Canal 1milhao é devidamente <b>REGISTRADA.</b>
+      A Lista de Ações do 1milhao Invest é devidamente <b>REGISTRADA.</b>
     </p>
+    <p style="margin-top:10px;">🤖 Robot 1milhão Invest</p>
   </body>
 </html>
 """.strip()
 
-                        enviar_alerta("curtissimo", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
+                    enviar_alerta("curtissimo", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
 
-                        estado["historico_alertas"].append({
-                            "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
-                            "ticker": ticker,
-                            "operacao": operacao,
-                            "preco_alvo": preco_alvo,
-                            "preco_atual": preco_atual
-                        })
+                    estado["historico_alertas"].append({
+                        "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
+                        "ticker": ticker,
+                        "operacao": operacao,
+                        "preco_alvo": preco_alvo,
+                        "preco_atual": preco_atual
+                    })
 
-                        tickers_para_remover.append(ticker)
-                        estado["em_contagem"][ticker] = False
-                        estado["tempo_acumulado"][ticker] = 0
+                    # ==================================================
+                    # ✅ LIMPEZA DEFINITIVA APÓS ALERTA
+                    # ==================================================
+                    estado["status"][ticker] = "✅ Removendo..."
+                    log(f"{ticker} marcado como 'Removendo...'", "🗂️")
 
-            else:
-                if estado["em_contagem"].get(ticker, False):
-                    print(f"❌ {ticker} saiu da zona de preço.")
-                    estado["em_contagem"][ticker] = False
-                    estado["tempo_acumulado"][ticker] = 0
-                    estado["status"][ticker] = "🔴 Fora da zona"
+                    estado["ativos"] = [a for a in estado["ativos"] if a.get("ticker") != ticker]
+                    estado["tempo_acumulado"].pop(ticker, None)
+                    estado["em_contagem"].pop(ticker, None)
+                    estado["precos_historicos"] = estado.get("precos_historicos", {})
+                    estado["precos_historicos"].pop(ticker, None)
 
-        # 🧹 LIMPEZA PÓS-ATIVAÇÃO (apenas no estado em memória + regrava a mesma chave)
-        if tickers_para_remover:
-            estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in tickers_para_remover]
-            for t in tickers_para_remover:
-                estado["tempo_acumulado"].pop(t, None)
-                estado["em_contagem"].pop(t, None)
-                estado["status"][t] = "✅ Ativado (removido)"
-            print(f"🧹 Removidos após ativação: {', '.join(tickers_para_remover)}")
+                    try:
+                        # ✅ CORREÇÃO: apaga somente o ticker
+                        apagar_estado_duravel(STATE_KEY, apenas_ticker=ticker)
+                        salvar_estado_duravel(STATE_KEY, estado)
+                        log(f"{ticker} removido do Supabase e estado atualizado.", "🗑️")
+                    except Exception as e:
+                        log(f"Erro ao limpar {ticker} no Supabase: {e}", "⚠️")
 
-        salvar_estado_duravel("curtissimo", estado)
-        print("💾 Estado salvo.\n")
+                    estado["status"][ticker] = "✅ Ativado (removido)"
+                    salvar_estado_duravel(STATE_KEY, estado)
+                    log(f"{ticker} removido completamente e persistido.", "💾")
+                    continue
+
+        # --------------------------------------------------
+        # 🧹 SALVAR ESTADO GERAL E ESPERAR PRÓXIMO CICLO
+        # --------------------------------------------------
+        salvar_estado_duravel(STATE_KEY, estado)
+        log("Estado salvo.", "💾")
         time.sleep(INTERVALO_VERIFICACAO)
 
     # ==================================================
-    # 🚫 FORA DO PREGÃO
+    # 🌙 FORA DO PREGÃO — MODO ESPERA
     # ==================================================
     else:
-        faltam, prox = segundos_ate_abertura(now)
-        print(
-            f"[{now.strftime('%H:%M:%S')}] 🟥 Pregão fechado. Próximo em {formatar_duracao(faltam)} (às {prox.strftime('%H:%M')})."
-        )
-        time.sleep(min(faltam, 3600))
-
-
-
-
-
+        segundos, abre = segundos_ate_abertura(now)
+        log(f"🌙 Fora do pregão. Próxima abertura em {formatar_duracao(segundos)} (às {abre.time()}).", "⏸️")
+        time.sleep(INTERVALO_VERIFICACAO)
