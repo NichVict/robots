@@ -95,6 +95,8 @@ log("=" * 60, "—")
 # ==================================================
 # 🔁 LOOP PRINCIPAL
 # ==================================================
+# 🔁 LOOP PRINCIPAL (com proteção de integridade)
+# ==================================================
 while True:
     now = agora_lx()
 
@@ -175,9 +177,7 @@ while True:
                     msg_op_encerrar = operacao.upper()
                     ticker_sem_ext = ticker.replace(".SA", "")
 
-                    # =============================
-                    # ✉️ MENSAGEM DE ALERTA COMPLETA
-                    # =============================
+                    # ✉️ ALERTA COMPLETO
                     msg_tg = f"""
 🛑 <b>ENCERRAMENTO (STOP) ATIVADO!</b>\n
 <b>Ticker:</b> {ticker_sem_ext}\n
@@ -192,31 +192,7 @@ while True:
 🤖 Robot 1milhão Invest
 """.strip()
 
-                    msg_html = f"""
-<html>
-  <body style="font-family:Arial,sans-serif; background-color:#0b1220; color:#e5e7eb; padding:20px;">
-    <h2 style="color:#ef4444;">🛑 ENCERRAMENTO (STOP) ATIVADO!</h2>
-    <p><b>Ticker:</b> {ticker_sem_ext}</p>
-    <p><b>Operação anterior:</b> {msg_operacao_anterior}</p>
-    <p><b>Operação para encerrar:</b> {msg_op_encerrar}</p>
-    <p><b>STOP (alvo):</b> R$ {preco_alvo:.2f}</p>
-    <p><b>Preço atual:</b> R$ {preco_atual:.2f}</p>
-    <p>📊 <a href="https://br.tradingview.com/symbols/{ticker_sem_ext}" style="color:#60a5fa;">Ver gráfico no TradingView</a></p>
-    <hr style="border:1px solid #ef4444; margin:20px 0;">
-    <p style="font-size:11px; line-height:1.4; color:#9ca3af;">
-      <b>COMPLIANCE:</b> Esta mensagem é uma sugestão de encerramento baseada em nossa CARTEIRA.<br>
-      A execução é de total decisão e responsabilidade do Destinatário.<br>
-      Esta informação é <b>CONFIDENCIAL</b>, de propriedade de 1milhão Invest e de seu DESTINATÁRIO tão somente.<br>
-      Se você <b>NÃO</b> for DESTINATÁRIO ou pessoa autorizada a recebê-lo, <b>NÃO PODE</b> usar, copiar, transmitir, retransmitir
-      ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.<br>
-      A Lista de Ações do 1milhão Invest é devidamente <b>REGISTRADA.</b>
-    </p>
-    <p style="margin-top:10px;">🤖 Robot 1milhão Invest</p>
-  </body>
-</html>
-""".strip()
-
-                    enviar_alerta("loss_curto", f"🛑 ENCERRAMENTO (STOP) - {ticker}", msg_html, msg_tg)
+                    enviar_alerta("loss_curto", f"🛑 ENCERRAMENTO (STOP) - {ticker}", msg_tg, msg_tg)
 
                     estado["historico_alertas"].append({
                         "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -252,8 +228,18 @@ while True:
                 except Exception as e:
                     log(f"Erro ao limpar {t} no Supabase: {e}", "⚠️")
 
-        salvar_estado_duravel(STATE_KEY, estado)
-        log("Estado salvo.", "💾")
+        # -----------------------------
+        # 💾 SALVAMENTO PROTEGIDO
+        # -----------------------------
+        if "ativos" in estado and isinstance(estado["ativos"], list):
+            if not estado["ativos"] and not tickers_para_remover:
+                log("⚠️ Estado sem ativos detectado — ignorando salvamento para proteger dados.", "🛑")
+            else:
+                salvar_estado_duravel(STATE_KEY, estado)
+                log("Estado salvo (com proteção de integridade).", "💾")
+        else:
+            log("⚠️ Estrutura de estado inválida — não foi salvo.", "🧩")
+
         time.sleep(INTERVALO_VERIFICACAO)
 
     # ==================================================
