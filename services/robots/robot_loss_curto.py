@@ -123,6 +123,21 @@ while True:
             log("🧹 Contagens zeradas — novo pregão iniciado.", "✅")
 
         log(f"Monitorando {len(estado['ativos'])} ativos (LOSS)...", "🟢")
+        # ==================================================
+        # 🔁 Proteção contra estado vazio (recarrega Supabase)
+        # ==================================================
+        if not estado.get("ativos"):
+            time.sleep(5)
+            novo_estado = carregar_estado_duravel(STATE_KEY)
+            if novo_estado and novo_estado.get("ativos"):
+                log("🔁 Estado recarregado com sucesso após delay — ativos encontrados.", "✅")
+                estado = novo_estado
+            else:
+                log("🛑 ⚠️ Estado sem ativos detectado — ignorando salvamento para proteger dados.", "⚠️")
+                time.sleep(INTERVALO_VERIFICACAO)
+                continue
+
+        
 
         tickers_para_remover = []
 
