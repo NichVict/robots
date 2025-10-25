@@ -220,8 +220,10 @@ while True:
 
                     estado["status"][ticker] = "🚀 Encerrado"
 
-                    msg_operacao_anterior = "COMPRA" if operacao == "venda" else "VENDA A DESCOBERTO"
-                    msg_op_encerrar = operacao.upper()
+                    # ✅ CORRETO p/ mensagens de encerramento (LOSS)
+                    msg_operacao_anterior = "COMPRA" if operacao == "compra" else "VENDA A DESCOBERTO"
+                    msg_op_encerrar      = "VENDA"  if operacao == "compra" else "COMPRA"
+
                     ticker_sem_ext = ticker.replace(".SA", "")
 
                     msg_tg = f"""
