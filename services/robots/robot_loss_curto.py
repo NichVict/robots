@@ -1,17 +1,14 @@
-# ==================================================
-# 🤖 ROBÔ LOSS CURTO — VERSÃO DURÁVEL E SEGURA (com proteção de cache)
-# ==================================================
 # services/robots/robot_loss_curto.py
 # -*- coding: utf-8 -*-
 import time
 import datetime
-import builtins
-import logging
 from zoneinfo import ZoneInfo
 from core.state import carregar_estado_duravel, salvar_estado_duravel, apagar_estado_duravel
 from core.prices import obter_preco_atual
 from core.notifications import enviar_alerta
 from core.logger import log  # ✅ Logger centralizado
+import builtins
+import logging
 
 # ==================================================
 # 🚫 DESATIVAR LOGS DE HTTP E SUPABASE
@@ -64,30 +61,25 @@ def formatar_duracao(segundos):
 log("Robô LOSS CURTO iniciado.", "🤖")
 estado = carregar_estado_duravel(STATE_KEY)
 
-print("🧩 DEBUG — Estado inicial carregado:", estado)
+if not estado:
+    log("Falha ao carregar estado remoto — aguardando reconexão...", "⚠️")
+    while not estado:
+        time.sleep(60)
+        estado = carregar_estado_duravel(STATE_KEY)
+        if estado:
+            log("Estado remoto recuperado com sucesso.", "✅")
+else:
+    log("Estado carregado com sucesso.", "✅")
 
-# ==================================================
-# 🧹 Proteção contra cache corrompido (mas sem apagar dados válidos)
-# ==================================================
-if not estado or not isinstance(estado, dict):
-    print("⚠️ Estado inválido ou corrompido. Criando novo estado base.")
+if not isinstance(estado, dict):
     estado = {}
 
-# ✅ Garante estrutura mínima sem sobrescrever dados válidos
 estado.setdefault("ativos", [])
-estado.setdefault("status", {})
 estado.setdefault("tempo_acumulado", {})
 estado.setdefault("em_contagem", {})
+estado.setdefault("status", {})
 estado.setdefault("historico_alertas", [])
 estado.setdefault("ultima_data_abertura_enviada", None)
-estado.setdefault("eventos_enviados", {})
-estado.setdefault("log_monitoramento", [])
-estado.setdefault("precos_historicos", {})
-estado.setdefault("pausado", False)
-estado.setdefault("_last_writer", "robot_loss_curto")
-estado["_last_writer_ts"] = datetime.datetime.now(TZ).isoformat()
-
-log("✅ Estado carregado e validado (dados preservados).", "🧾")
 
 log(f"{len(estado['ativos'])} ativos carregados.", "📦")
 log("=" * 60, "—")
@@ -95,10 +87,65 @@ log("=" * 60, "—")
 # ==================================================
 # 🔁 LOOP PRINCIPAL
 # ==================================================
-# 🔁 LOOP PRINCIPAL (com proteção de integridade)
-# ==================================================
 while True:
     now = agora_lx()
+
+    # ==================================================
+    # 🔄 RECARREGAR ESTADO DO SUPABASE
+    # ==================================================
+    try:
+        remoto = carregar_estado_duravel(STATE_KEY)
+        if isinstance(remoto, dict):
+            estado_remoto_ativos = remoto.get("ativos", [])
+            ativos_removidos = {
+                t for t, s in estado.get("status", {}).items()
+                if "Removido" in s or "Removendo" in s
+            }
+
+            estado["ativos"] = [
+                a for a in estado_remoto_ativos
+                if a.get("ticker") not in ativos_removidos
+            ]
+
+            if ativos_removidos:
+                log(f"Ignorando {len(ativos_removidos)} ativo(s) removido(s): {', '.join(ativos_removidos)}", "🧹")
+
+            estado.setdefault("tempo_acumulado", {})
+            estado.setdefault("em_contagem", {})
+            estado.setdefault("status", {})
+            remoto.setdefault("tempo_acumulado", {})
+            remoto.setdefault("em_contagem", {})
+            remoto.setdefault("status", {})
+
+            atuais = {a["ticker"] for a in estado["ativos"] if "ticker" in a}
+            novo_tempo = {}
+            novo_contagem = {}
+            novo_status = {}
+
+            for t in atuais:
+                if t in estado["tempo_acumulado"]:
+                    novo_tempo[t] = estado["tempo_acumulado"][t]
+                elif t in remoto["tempo_acumulado"]:
+                    novo_tempo[t] = remoto["tempo_acumulado"][t]
+
+                if t in estado["em_contagem"]:
+                    novo_contagem[t] = estado["em_contagem"][t]
+                elif t in remoto["em_contagem"]:
+                    novo_contagem[t] = remoto["em_contagem"][t]
+
+                if t in estado["status"]:
+                    novo_status[t] = estado["status"][t]
+                elif t in remoto["status"]:
+                    novo_status[t] = remoto["status"][t]
+
+            estado["tempo_acumulado"] = novo_tempo
+            estado["em_contagem"] = novo_contagem
+            estado["status"] = novo_status
+            log(f"Estado sincronizado com Supabase ({len(estado['ativos'])} ativos).", "🔁")
+        else:
+            log("Aviso: resposta do Supabase inválida ao tentar recarregar estado.", "⚠️")
+    except Exception as e:
+        log(f"Erro ao recarregar estado do Supabase: {e}", "⚠️")
 
     # ==================================================
     # 🕓 DURANTE O PREGÃO
@@ -116,34 +163,21 @@ while True:
                 "🛑 Robô LOSS CURTO ativo — Pregão Aberto!"
             )
             estado["ultima_data_abertura_enviada"] = data_hoje
+            log("🧹 Limpando contagens do dia anterior (novo pregão iniciado)...", "🔁")
             estado["tempo_acumulado"].clear()
             estado["em_contagem"].clear()
             estado["status"].clear()
             salvar_estado_duravel(STATE_KEY, estado)
-            log("🧹 Contagens zeradas — novo pregão iniciado.", "✅")
+            log("Contagens zeradas com sucesso para o novo pregão.", "✅")
 
         log(f"Monitorando {len(estado['ativos'])} ativos (LOSS)...", "🟢")
+
         # ==================================================
-        # 🔁 Proteção contra estado vazio (recarrega Supabase)
+        # 🔍 Verificação dos ativos (zona inversa)
         # ==================================================
-        if not estado.get("ativos"):
-            time.sleep(5)
-            novo_estado = carregar_estado_duravel(STATE_KEY)
-            if novo_estado and novo_estado.get("ativos"):
-                log("🔁 Estado recarregado com sucesso após delay — ativos encontrados.", "✅")
-                estado = novo_estado
-            else:
-                log("🛑 ⚠️ Estado sem ativos detectado — ignorando salvamento para proteger dados.", "⚠️")
-                time.sleep(INTERVALO_VERIFICACAO)
-                continue
-
-        
-
-        tickers_para_remover = []
-
         for ativo in estado["ativos"]:
             ticker = ativo["ticker"]
-            preco_alvo = ativo["preco"]
+            preco_stop = ativo["preco"]
             operacao = ativo["operacao"]
             tk_full = f"{ticker}.SA" if not ticker.endswith(".SA") else ticker
 
@@ -158,47 +192,44 @@ while True:
                 log(f"Erro ao obter preço de {ticker}: {e}", "⚠️")
                 continue
 
-            # 💡 Condição de STOP (zona inversa)
+            # 💡 Condição inversa de STOP:
             condicao = (
-                (operacao == "compra" and preco_atual <= preco_alvo)
-                or (operacao == "venda" and preco_atual >= preco_alvo)
+                (operacao == "compra" and preco_atual <= preco_stop)
+                or (operacao == "venda" and preco_atual >= preco_stop)
             )
 
             # -----------------------------
             # BLOCO DE CONTAGEM
             # -----------------------------
             if condicao:
-                estado["status"][ticker] = "🟡 Em contagem"
+                estado["status"][ticker] = "🟡 Em contagem (STOP)"
 
                 if not estado["em_contagem"].get(ticker, False):
                     estado["em_contagem"][ticker] = True
                     estado["tempo_acumulado"][ticker] = 0
-                    log(f"{ticker} entrou na zona de STOP ({preco_alvo:.2f}). Iniciando contagem...", "⚠️")
+                    log(f"{ticker} entrou na zona de STOP ({preco_stop:.2f}). Iniciando contagem...", "⚠️")
                 else:
                     estado["tempo_acumulado"][ticker] += INTERVALO_VERIFICACAO
                     log(f"{ticker}: {formatar_duracao(estado['tempo_acumulado'][ticker])} acumulados.", "⌛")
 
                 # 🚀 Disparo do ENCERRAMENTO (STOP)
                 if estado["tempo_acumulado"][ticker] >= TEMPO_ACUMULADO_MAXIMO:
-                    event_id = f"{STATE_KEY}|{ticker}|{operacao}|{now.date()}"
-                    if estado["eventos_enviados"].get(event_id):
-                        log(f"{ticker}: encerramento já enviado hoje. Ignorando duplicação.", "⏸️")
+                    if estado["status"].get(ticker) in ["🚀 Encerrado", "✅ Removendo...", "✅ Encerrado (removido)"]:
+                        log(f"{ticker} já foi encerrado. Ignorando duplicação.", "⏸️")
                         continue
 
-                    estado["eventos_enviados"][event_id] = True
                     estado["status"][ticker] = "🚀 Encerrado"
 
                     msg_operacao_anterior = "COMPRA" if operacao == "venda" else "VENDA A DESCOBERTO"
                     msg_op_encerrar = operacao.upper()
                     ticker_sem_ext = ticker.replace(".SA", "")
 
-                    # ✉️ ALERTA COMPLETO
                     msg_tg = f"""
 🛑 <b>ENCERRAMENTO (STOP) ATIVADO!</b>\n
 <b>Ticker:</b> {ticker_sem_ext}\n
 <b>Operação anterior:</b> {msg_operacao_anterior}\n
 <b>Operação para encerrar:</b> {msg_op_encerrar}\n
-<b>STOP (alvo):</b> R$ {preco_alvo:.2f}\n
+<b>STOP (alvo):</b> R$ {preco_stop:.2f}\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n
 📊 <a href='https://br.tradingview.com/symbols/{ticker_sem_ext}'>Abrir gráfico no TradingView</a>\n
 ───────────────\n
@@ -213,13 +244,30 @@ while True:
                         "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
                         "ticker": ticker,
                         "operacao": operacao,
-                        "preco_alvo": preco_alvo,
+                        "preco_alvo": preco_stop,
                         "preco_atual": preco_atual
                     })
 
-                    tickers_para_remover.append(ticker)
-                    estado["em_contagem"][ticker] = False
-                    estado["tempo_acumulado"][ticker] = 0
+                    estado["status"][ticker] = "✅ Removendo..."
+                    log(f"{ticker} marcado como 'Removendo...'", "🗂️")
+
+                    estado["ativos"] = [a for a in estado["ativos"] if a.get("ticker") != ticker]
+                    estado["tempo_acumulado"].pop(ticker, None)
+                    estado["em_contagem"].pop(ticker, None)
+                    estado["precos_historicos"] = estado.get("precos_historicos", {})
+                    estado["precos_historicos"].pop(ticker, None)
+
+                    try:
+                        apagar_estado_duravel(STATE_KEY, apenas_ticker=ticker)
+                        salvar_estado_duravel(STATE_KEY, estado)
+                        log(f"{ticker} removido do Supabase e estado atualizado.", "🗑️")
+                    except Exception as e:
+                        log(f"Erro ao limpar {ticker} no Supabase: {e}", "⚠️")
+
+                    estado["status"][ticker] = "✅ Encerrado (removido)"
+                    salvar_estado_duravel(STATE_KEY, estado)
+                    log(f"{ticker} encerrado completamente e persistido.", "💾")
+                    continue
 
             else:
                 if estado["em_contagem"].get(ticker, False):
@@ -228,39 +276,17 @@ while True:
                     estado["tempo_acumulado"][ticker] = 0
                     estado["status"][ticker] = "🔴 Fora do STOP"
 
-        # -----------------------------
-        # 🧹 LIMPEZA PÓS-ENCERRAMENTO
-        # -----------------------------
-        if tickers_para_remover:
-            estado["ativos"] = [a for a in estado["ativos"] if a["ticker"] not in tickers_para_remover]
-            for t in tickers_para_remover:
-                estado["tempo_acumulado"].pop(t, None)
-                estado["em_contagem"].pop(t, None)
-                estado["status"][t] = "✅ Encerrado (removido)"
-                try:
-                    apagar_estado_duravel(STATE_KEY, apenas_ticker=t)
-                    log(f"{t} removido do Supabase (loss_curto).", "🗑️")
-                except Exception as e:
-                    log(f"Erro ao limpar {t} no Supabase: {e}", "⚠️")
-
-        # -----------------------------
-        # 💾 SALVAMENTO PROTEGIDO
-        # -----------------------------
-        if "ativos" in estado and isinstance(estado["ativos"], list):
-            if not estado["ativos"] and not tickers_para_remover:
-                log("⚠️ Estado sem ativos detectado — ignorando salvamento para proteger dados.", "🛑")
-            else:
-                salvar_estado_duravel(STATE_KEY, estado)
-                log("Estado salvo (com proteção de integridade).", "💾")
-        else:
-            log("⚠️ Estrutura de estado inválida — não foi salvo.", "🧩")
-
+        # --------------------------------------------------
+        # 🧹 SALVAR ESTADO GERAL E ESPERAR PRÓXIMO CICLO
+        # --------------------------------------------------
+        salvar_estado_duravel(STATE_KEY, estado)
+        log("Estado salvo.", "💾")
         time.sleep(INTERVALO_VERIFICACAO)
 
     # ==================================================
-    # 🌙 FORA DO PREGÃO
+    # 🌙 FORA DO PREGÃO — MODO ESPERA
     # ==================================================
     else:
-        faltam, prox = segundos_ate_abertura(now)
-        log(f"🌙 Fora do pregão. Próxima abertura em {formatar_duracao(faltam)} (às {prox.time()}).", "⏸️")
-        time.sleep(min(faltam, 3600))
+        segundos, abre = segundos_ate_abertura(now)
+        log(f"🌙 Fora do pregão. Próxima abertura em {formatar_duracao(segundos)} (às {abre.time()}).", "⏸️")
+        time.sleep(INTERVALO_VERIFICACAO)
