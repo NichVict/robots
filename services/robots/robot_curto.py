@@ -29,8 +29,8 @@ TZ = ZoneInfo("Europe/Lisbon")
 STATE_KEY = "curto_przo_v1"
 HORARIO_INICIO_PREGAO = datetime.time(3, 0, 0)
 HORARIO_FIM_PREGAO = datetime.time(23, 59, 0)
-INTERVALO_VERIFICACAO = 180     # 3 minutos
-TEMPO_ACUMULADO_MAXIMO = 480    # 8 minutos
+INTERVALO_VERIFICACAO = 60     # 3 minutos
+TEMPO_ACUMULADO_MAXIMO = 120   # 8 minutos
 
 # ==================================================
 # 🕒 FUNÇÕES DE TEMPO
@@ -258,14 +258,9 @@ while True:
 <b>Preço alvo:</b> R$ {preco_alvo:.2f}\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n\n
 📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>\n\n
-━━━━━━━━━━━━━━━━━━━━━━━\n
-<i>
-<b>COMPLIANCE:</b> mensagem baseada em nossa carteira e não constitui recomendação formal.\n
-A decisão de compra ou venda é exclusiva do destinatário.\n
-O conteúdo é confidencial e de uso restrito ao destinatário autorizado, sendo vedada sua reprodução ou divulgação.\n
-Lista de Ações do 1milhão Invest devidamente registrada.
-</i>\n
-━━━━━━━━━━━━━━━━━━━━━━━\n
+───────────────\n
+<i><b>COMPLIANCE:</b> mensagem baseada em nossa carteira e não constitui recomendação formal. A decisão de compra ou venda é exclusiva do destinatário. Conteúdo confidencial, uso restrito ao destinatário autorizado. © 1milhão Invest.</i>\n
+───────────────\n
 🤖 Robot 1milhão Invest
 """.strip()
 
