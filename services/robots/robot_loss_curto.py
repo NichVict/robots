@@ -1,5 +1,5 @@
 # ==================================================
-# 🤖 ROBÔ LOSS CURTO — VERSÃO DURÁVEL E SEGURA
+# 🤖 ROBÔ LOSS CURTO — VERSÃO DURÁVEL E SEGURA (com proteção de cache)
 # ==================================================
 # services/robots/robot_loss_curto.py
 # -*- coding: utf-8 -*-
@@ -64,13 +64,30 @@ def formatar_duracao(segundos):
 log("Robô LOSS CURTO iniciado.", "🤖")
 estado = carregar_estado_duravel(STATE_KEY)
 
-if not estado:
-    log("Falha ao carregar estado remoto — aguardando reconexão...", "⚠️")
-    while not estado:
-        time.sleep(60)
-        estado = carregar_estado_duravel(STATE_KEY)
-        if estado:
-            log("Estado remoto recuperado com sucesso.", "✅")
+# ==================================================
+# 🧹 Proteção contra restauração de cache antigo
+# ==================================================
+if not estado or not isinstance(estado, dict) or not estado.get("ativos"):
+    print("⚠️ Nenhum ativo encontrado ou estado remoto vazio.")
+    print("🧹 Estado limpo detectado — ignorando cache local e reiniciando base padrão.")
+
+    estado = {
+        "ativos": [],
+        "status": {},
+        "tempo_acumulado": {},
+        "em_contagem": {},
+        "historico_alertas": [],
+        "ultima_data_abertura_enviada": None,
+        "eventos_enviados": {},
+        "log_monitoramento": [],
+        "precos_historicos": {},
+        "pausado": False,
+        "_last_writer": "robot_loss_curto",
+        "_last_writer_ts": datetime.datetime.now(TZ).isoformat(),
+    }
+
+    salvar_estado_duravel(STATE_KEY, estado)
+    log("✅ Estado vazio detectado — novo estado base salvo na Supabase.", "🧾")
 else:
     log("Estado carregado com sucesso.", "✅")
 
@@ -227,7 +244,6 @@ while True:
                     estado["tempo_acumulado"][ticker] = 0
 
             else:
-                # Saiu da zona de STOP
                 if estado["em_contagem"].get(ticker, False):
                     log(f"{ticker} saiu da zona de STOP.", "❌")
                     estado["em_contagem"][ticker] = False
