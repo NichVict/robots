@@ -286,7 +286,12 @@ while True:
 </html>
 """.strip()
 
-                    enviar_alerta("curtissimo", f"Alerta {msg_op.upper()} - {ticker}", msg_html, msg_tg)
+                    enviar_alerta(                        
+                        "curtissimo",
+                        f"🔥 ALERTA CARTEIRA DE CURTÍSSIMO PRAZO — {ticker}",
+                        msg_html,
+                        msg_tg
+                    )
 
                     estado["historico_alertas"].append({
                         "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
