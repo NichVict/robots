@@ -64,43 +64,30 @@ def formatar_duracao(segundos):
 log("Robô LOSS CURTO iniciado.", "🤖")
 estado = carregar_estado_duravel(STATE_KEY)
 
+print("🧩 DEBUG — Estado inicial carregado:", estado)
+
 # ==================================================
-# 🧹 Proteção contra restauração de cache antigo
+# 🧹 Proteção contra cache corrompido (mas sem apagar dados válidos)
 # ==================================================
-if not estado or not isinstance(estado, dict) or not estado.get("ativos"):
-    print("⚠️ Nenhum ativo encontrado ou estado remoto vazio.")
-    print("🧹 Estado limpo detectado — ignorando cache local e reiniciando base padrão.")
-
-    estado = {
-        "ativos": [],
-        "status": {},
-        "tempo_acumulado": {},
-        "em_contagem": {},
-        "historico_alertas": [],
-        "ultima_data_abertura_enviada": None,
-        "eventos_enviados": {},
-        "log_monitoramento": [],
-        "precos_historicos": {},
-        "pausado": False,
-        "_last_writer": "robot_loss_curto",
-        "_last_writer_ts": datetime.datetime.now(TZ).isoformat(),
-    }
-
-    salvar_estado_duravel(STATE_KEY, estado)
-    log("✅ Estado vazio detectado — novo estado base salvo na Supabase.", "🧾")
-else:
-    log("Estado carregado com sucesso.", "✅")
-
-if not isinstance(estado, dict):
+if not estado or not isinstance(estado, dict):
+    print("⚠️ Estado inválido ou corrompido. Criando novo estado base.")
     estado = {}
 
+# ✅ Garante estrutura mínima sem sobrescrever dados válidos
 estado.setdefault("ativos", [])
+estado.setdefault("status", {})
 estado.setdefault("tempo_acumulado", {})
 estado.setdefault("em_contagem", {})
-estado.setdefault("status", {})
 estado.setdefault("historico_alertas", [])
 estado.setdefault("ultima_data_abertura_enviada", None)
 estado.setdefault("eventos_enviados", {})
+estado.setdefault("log_monitoramento", [])
+estado.setdefault("precos_historicos", {})
+estado.setdefault("pausado", False)
+estado.setdefault("_last_writer", "robot_loss_curto")
+estado["_last_writer_ts"] = datetime.datetime.now(TZ).isoformat()
+
+log("✅ Estado carregado e validado (dados preservados).", "🧾")
 
 log(f"{len(estado['ativos'])} ativos carregados.", "📦")
 log("=" * 60, "—")
