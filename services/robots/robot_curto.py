@@ -258,12 +258,13 @@ while True:
 <b>Preço alvo:</b> R$ {preco_alvo:.2f}\n
 <b>Preço atual:</b> R$ {preco_atual:.2f}\n\n
 📊 <a href='https://br.tradingview.com/symbols/{ticker_symbol_sem_ext}'>Abrir gráfico no TradingView</a>\n\n
-COMPLIANCE: Esta mensagem é uma sugestão de compra/venda baseada em nossa CARTEIRA.\n
-A compra ou venda é de total decisão e responsabilidade do Destinatário.\n
-Esta informação é CONFIDENCIAL, de propriedade de 1milhao Invest e de seu DESTINATÁRIO tão somente.\n
-Se você NÃO for DESTINATÁRIO ou pessoa autorizada a recebê-lo, NÃO PODE usar, copiar, transmitir, retransmitir
-ou divulgar seu conteúdo (no todo ou em partes), estando sujeito às penalidades da LEI.\n
-A Lista de Ações do 1milhao Invest é devidamente REGISTRADA.\n\n
+<code>
+COMPLIANCE: Esta mensagem é uma sugestão baseada em nossa carteira e não constitui recomendação formal.
+A decisão de compra ou venda é exclusiva do destinatário.
+O conteúdo é confidencial e de uso restrito ao destinatário autorizado, sendo vedada sua reprodução ou divulgação, total ou parcial, sob pena de sanções legais.
+A Lista de Ações do 1milhão Invest é registrada.
+</code>
+
 🤖 Robot 1milhão Invest
 """.strip()
 
