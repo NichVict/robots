@@ -268,7 +268,13 @@ while True:
 🤖 Robot 1milhão Invest
 """.strip()
 
-                    enviar_alerta("loss_curtissimo", f"🛑 ENCERRAMENTO (STOP) - {ticker}", msg_html, msg_tg)
+                    
+                    enviar_alerta(                        
+                        "loss_curtissimo",
+                        f"🔥 ALERTA CARTEIRA DE CURTÍSSIMO PRAZO — {ticker}",
+                        msg_html,
+                        msg_tg
+                    )
 
                     estado["historico_alertas"].append({
                         "hora": now.strftime("%Y-%m-%d %H:%M:%S"),
